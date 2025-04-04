@@ -1,0 +1,5 @@
+torch 
+transformers 
+requests 
+numpy
+openai
