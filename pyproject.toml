@@ -22,7 +22,6 @@ dependencies = [
     "tiktoken",
     "einops",
     "transformers_stream_generator",
-    "flash-attn",     # For FlashAttention support
     "vllm",           # For vLLM approach
     "bitsandbytes"
 ]

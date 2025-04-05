@@ -12,6 +12,5 @@ accelerate
 tiktoken
 einops 
 transformers_stream_generator
-flash-attn
 vllm
 bitsandbytes
