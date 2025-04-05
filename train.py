@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 import json
 from models.t5small_huggingface import T5SmallQueryEnhancer
-from models.qwen import QwenQueryEnhancer
+from models.qwen_vllm import QwenVLLMQueryEnhancer
 from llm.deepseek import DeepseekAPI
 from utils.reward_util import RewardCalculator
 
@@ -67,7 +67,7 @@ class RLTrainer:
 
 def main():
     # 初始化组件
-    query_enhancer = QwenQueryEnhancer()
+    query_enhancer = QwenVLLMQueryEnhancer()
     deepseek_api = DeepseekAPI()
     reward_calculator = RewardCalculator()
     
