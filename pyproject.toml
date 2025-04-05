@@ -15,7 +15,10 @@ dependencies = [
     "openai",
     "python-dotenv",
     "modelscope",
-    "httpx[socks]"
+    "httpx[socks]",
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "accelerate"
 ]
 
 [tool.hatch.metadata]
