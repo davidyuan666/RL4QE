@@ -4,7 +4,7 @@ import torch.optim as optim
 from typing import List, Dict, Tuple
 import numpy as np
 import json
-from models.t5small import QueryEnhancer
+from models.t5small import T5SmallQueryEnhancer
 from llm.deepseek import DeepseekAPI
 
 class RewardCalculator:
@@ -19,7 +19,7 @@ class RewardCalculator:
 
 class RLTrainer:
     def __init__(self, 
-                 query_enhancer: QueryEnhancer,
+                 query_enhancer: T5SmallQueryEnhancer,
                  deepseek_api: DeepseekAPI,
                  reward_calculator: RewardCalculator,
                  learning_rate: float = 1e-4):
@@ -51,7 +51,7 @@ class RLTrainer:
 
 def main():
     # 初始化组件
-    query_enhancer = QueryEnhancer()
+    query_enhancer = T5SmallQueryEnhancer()
     deepseek_api = DeepseekAPI()
     reward_calculator = RewardCalculator()
     
@@ -73,6 +73,7 @@ def main():
                 data["query"],
                 data["ground_truth"]
             )
+            print(f"Epoch {epoch + 1}, Reward: {reward:.4f}, original Query: {data['query']}, Enhanced Query: {enhanced_query}")
             total_reward += reward
             
         avg_reward = total_reward / len(training_data)
