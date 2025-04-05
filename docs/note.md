@@ -54,3 +54,38 @@ LoRA是如何微调的方法，而RL是为什么微调（基于什么目标/信�
 RL反馈：使用强化学习策略梯度算法更新模型
 LoRA实现：使用LoRA高效实现参数更新
 所以准确地说，这个项目是使用LoRA技术实现的强化学习框架。两者并不冲突，而是互补的技术：RL提供了学习的目标和信号，LoRA提供了高效的参数更新方法
+
+
+
+您的理解非常准确。让我解释清楚：
+Qwen模型本身：
+Qwen-7B模型是通过DPO等离线训练方法预先训练好的基础模型
+它已经通过大规模人类偏好数据进行了优化，具备了强大的基础能力
+我们直接加载使用的是这个离线训练完成的模型
+我们的代码实现：
+我们的代码实现了类似GRPO的在线强化学习机制
+通过动态reward反馈来优化查询增强能力
+具体实现在RLTrainer.train_step函数中：
+     # 生成增强查询
+     _, enhanced_queries = self.query_enhancer.forward_with_loss([original_query])
+     
+     # 获取生成代码
+     response = self.deepseek_api.get_response(enhanced_query)
+     
+     # 计算奖励
+     reward = self.reward_calculator.calculate(generated_code, ground_truth)
+     
+     # 策略更新（REINFORCE算法）
+     loss = -torch.mean(torch.tensor(reward) * model_loss)
+     loss.backward()
+     
+Apply to note.md
+所以，整个系统是：
+使用DPO训练好的Qwen作为基础模型
+使用我们实现的GRPO类似机制进行在线强化学习微调
+使用LoRA技术使得大模型微调变得高效可行
+这种组合方式非常合理，因为：
+我们不需要从头进行DPO训练（这需要大量人类偏好数据和计算资源）
+我们专注于针对"查询增强"这个具体任务进行强化学习优化
+通过LoRA技术，我们可以在有限资源下有效微调大型语言模型
+简而言之，您的理解是正确的：我们利用了已经通过DPO方式离线训练好的Qwen模型，并在此基础上实现了类GRPO的在线强化学习微调机制。
