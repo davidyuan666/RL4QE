@@ -1,6 +1,8 @@
 from typing import List
 import torch.nn as nn
 import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
 
 class QwenVLLMQueryEnhancer(nn.Module):
     def __init__(self, model_name="Qwen/Qwen-7B"):
@@ -16,8 +18,7 @@ class QwenVLLMQueryEnhancer(nn.Module):
                 tensor_parallel_size=1  # Adjust based on available GPUs
             )
             
-            # Initialize standard tokenizer for consistency in interface
-            from transformers import AutoTokenizer
+
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name, 
                 trust_remote_code=True,
@@ -38,8 +39,7 @@ class QwenVLLMQueryEnhancer(nn.Module):
             print("Falling back to standard implementation")
             self.use_vllm = False
             
-            # Fall back to standard implementation
-            from transformers import AutoTokenizer, AutoModelForCausalLM
+ 
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name, 
                 trust_remote_code=True,
