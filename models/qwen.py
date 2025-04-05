@@ -1,3 +1,15 @@
+import os
+# Set environment variables to disable Flash Attention
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
+# This is important to prevent loading the problematic flash_attn module
+os.environ["DISABLE_FLASH_ATTN"] = "true"
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch.nn as nn
+from typing import List
+import torch
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch.nn as nn
 from typing import List
