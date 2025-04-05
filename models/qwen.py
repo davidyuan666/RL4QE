@@ -6,18 +6,19 @@ import torch
 class QwenQueryEnhancer(nn.Module):
     def __init__(self, model_name="Qwen/Qwen-7B"):
         super().__init__()
-        # Load tokenizer with explicitly added pad_token
+        # Load the tokenizer with proper settings
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name, 
             trust_remote_code=True,
             cache_dir="huggingface_cache",
-            padding_side="right"  # Ensure padding is on the right
         )
         
-        # Add special padding token
-        special_tokens_dict = {'pad_token': '<PAD>'}
-        num_added_toks = self.tokenizer.add_special_tokens(special_tokens_dict)
-        
+        # For Qwen models, use the eos token as the pad token
+        # These models don't support adding new special tokens
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            
         # Make sure model is updated with the new token
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -26,10 +27,7 @@ class QwenQueryEnhancer(nn.Module):
             device_map="auto"
         )
         
-        # Resize token embeddings to accommodate the new padding token
-        self.model.resize_token_embeddings(len(self.tokenizer))
-        
-        # Update model config with pad token ID
+        # Ensure model config has pad token ID set
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         
     def forward(self, queries: List[str]) -> List[str]:
@@ -42,14 +40,8 @@ Enhanced query:"""
         for query in queries:
             prompt = prompt_template.format(query=query)
             
-            # Ensure padding works by using the correct tokenizer settings
-            inputs = self.tokenizer(
-                prompt, 
-                return_tensors="pt", 
-                padding="max_length", 
-                max_length=512,
-                truncation=True
-            )
+            # Process a single query at a time (no padding needed)
+            inputs = self.tokenizer(prompt, return_tensors="pt")
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
             outputs = self.model.generate(
