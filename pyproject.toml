@@ -13,7 +13,9 @@ dependencies = [
     "requests",
     "numpy",
     "openai",
-    "python-dotenv"
+    "python-dotenv",
+    "modelscope",
+    "httpx[socks]"
 ]
 
 [tool.hatch.metadata]
