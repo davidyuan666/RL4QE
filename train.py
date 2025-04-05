@@ -29,10 +29,29 @@ class RLTrainer:
 
         # 2. Get Deepseek response
         response = self.deepseek_api.get_response(enhanced_query)
-
-        print(f'response: {response}')
-
-        generated_code = response.split("<answer>")[1].split("</answer>")[0].strip()
+        generated_code = None
+        try:
+            # First try to extract content between <answer> tags
+            if "<answer>" in response and "</answer>" in response:
+                generated_code = response.split("<answer>")[1].split("</answer>")[0].strip()
+                # Remove code block markers if present
+                if generated_code.startswith("```"):
+                    # Find the first newline to skip the language specifier line
+                    first_newline = generated_code.find("\n")
+                    if first_newline != -1:
+                        # Find the last ``` and exclude it
+                        last_marker = generated_code.rfind("```")
+                        if last_marker != -1:
+                            generated_code = generated_code[first_newline:last_marker].strip()
+                        else:
+                            generated_code = generated_code[first_newline:].strip()
+            else:
+                # If no answer tags found, return empty string or handle as needed
+                generated_code = ""
+                print(f"Warning: Could not find <answer> tags in response: {response}")
+        except Exception as e:
+            print(f"Error parsing response: {e}")
+            generated_code = ""
 
         # 3. Calculate reward
         reward = self.reward_calculator.calculate(generated_code, ground_truth)
