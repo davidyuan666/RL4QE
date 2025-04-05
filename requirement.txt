@@ -9,3 +9,4 @@ httpx[socks]
 transformers>=4.35.0
 torch>=2.0.0
 accelerate
+tiktoken
