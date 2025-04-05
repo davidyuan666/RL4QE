@@ -31,7 +31,8 @@ Enhanced query:"""
         enhanced_queries = []
         for query in queries:
             prompt = prompt_template.format(query=query)
-            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+            # Remove padding=True since it's causing issues
+            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
             outputs = self.model.generate(
@@ -40,7 +41,6 @@ Enhanced query:"""
                 temperature=0.7,
                 top_p=0.9,
                 do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id
             )
             
