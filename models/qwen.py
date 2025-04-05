@@ -11,6 +11,10 @@ class QwenQueryEnhancer(nn.Module):
             trust_remote_code=True,
             cache_dir="huggingface_cache"
         )
+
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=True,
