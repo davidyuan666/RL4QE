@@ -14,26 +14,12 @@ class QwenQueryEnhancer(nn.Module):
         # For Qwen, we need to set pad_token to an existing token
         self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        # Try to use Flash Attention 2 for better efficiency
-        try:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                cache_dir="huggingface_cache",
-                device_map="auto",
-                attn_implementation="flash_attention_2"  # Enable Flash Attention 2
-            )
-            print("Successfully enabled Flash Attention 2")
-        except (ImportError, ValueError) as e:
-            print(f"Warning: Could not enable Flash Attention: {e}")
-            print("Please install FlashAttention for higher efficiency: pip install flash-attn")
-            # Fall back to standard attention implementation
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                cache_dir="huggingface_cache",
-                device_map="auto"
-            )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            cache_dir="huggingface_cache",
+            device_map="auto"  # 自动处理模型加载到GPU/CPU
+        )
 
         
     def forward(self, queries: List[str]) -> List[str]:
