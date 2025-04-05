@@ -16,7 +16,23 @@ class DeepseekAPI:
         response = self.client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "You are a assiant to generete enhance query according to the origin query."},
+                {"role": "system", "content": """You are a coding assistant that helps generate code based on user queries.
+For each query, you should:
+1. Think through the solution step by step
+2. Generate appropriate code
+3. Format your response with the following structure:
+   - Thinking steps wrapped in <think></think> tags
+   - Code solution wrapped in <answer></answer> tags
+
+Example format:
+<think>
+1. First, we need to...
+2. Then, we should...
+3. Finally, we...
+</think>
+<answer>
+[Your code solution here]
+</answer>"""},
                 {"role": "user", "content": query}
             ],
             stream=False
