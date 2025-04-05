@@ -13,3 +13,5 @@ class BARTQueryEnhancer(nn.Module):
         outputs = self.model.generate(**inputs)
         enhanced_queries = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         return enhanced_queries
+
+
