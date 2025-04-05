@@ -21,3 +21,23 @@ class T5SmallQueryEnhancer(nn.Module):
         )
         enhanced_queries = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         return enhanced_queries
+        
+    def forward_with_loss(self, queries: List[str]):
+        # Similar to forward but also computes loss
+        prefixed_queries = ["enhance: " + query for query in queries]
+        inputs = self.tokenizer(prefixed_queries, return_tensors="pt", padding=True, truncation=True)
+        
+        # Get model outputs with loss
+        outputs = self.model(**inputs, labels=inputs["input_ids"])
+        
+        # Generate enhanced queries
+        generated = self.model.generate(
+            **inputs,
+            max_length=128,
+            num_beams=4,
+            temperature=0.7,
+            do_sample=True
+        )
+        enhanced_queries = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+        
+        return outputs.loss, enhanced_queries
