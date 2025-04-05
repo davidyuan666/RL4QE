@@ -4,3 +4,7 @@ commit:
 	git push
 
 
+install:
+	pdm install
+
+
