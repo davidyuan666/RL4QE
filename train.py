@@ -29,9 +29,18 @@ class RLTrainer:
         
         # 2. Get Deepseek response
         response = self.deepseek_api.get_response(enhanced_query)
-        
+
+        generated_code = response.split("<answer>")[1].split("</answer>")[0].strip()
+
+        print(f'generated_code: {generated_code}')
+
+        generated_thinking = response.split("<thinking>")[1].split("</thinking>")[0].strip()
+
+        print(f'generated_thinking: {generated_thinking}')
+
+
         # 3. Calculate reward
-        reward = self.reward_calculator.calculate(response, ground_truth)
+        reward = self.reward_calculator.calculate(generated_code, ground_truth)
         
         # 4. Calculate policy gradient and update model
         self.optimizer.zero_grad()
@@ -40,7 +49,7 @@ class RLTrainer:
         loss.backward()
         self.optimizer.step()
         
-        return reward, enhanced_query,response
+        return reward, enhanced_query,generated_code
 
 def main():
     # 初始化组件
@@ -62,11 +71,11 @@ def main():
     for epoch in range(num_epochs):
         total_reward = 0
         for data in training_data:
-            reward, enhanced_query,response = trainer.train_step(
+            reward, enhanced_query, generated_code = trainer.train_step(
                 data["query"],
                 data["ground_truth"]
             )
-            print(f"Epoch {epoch + 1}, Reward: {reward:.4f}, original Query: {data['query']}, Enhanced Query: {enhanced_query}, Response: {response}")
+            print(f"Epoch {epoch + 1}, Reward: {reward:.4f}, original Query: {data['query']}, Enhanced Query: {enhanced_query}, Response: {generated_code}")
             total_reward += reward
             
         avg_reward = total_reward / len(training_data)
