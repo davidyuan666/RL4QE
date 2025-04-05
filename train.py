@@ -34,11 +34,6 @@ class RLTrainer:
 
         print(f'generated_code: {generated_code}')
 
-        generated_thinking = response.split("<thinking>")[1].split("</thinking>")[0].strip()
-
-        print(f'generated_thinking: {generated_thinking}')
-
-
         # 3. Calculate reward
         reward = self.reward_calculator.calculate(generated_code, ground_truth)
         
