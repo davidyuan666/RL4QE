@@ -33,19 +33,27 @@ class QwenLoRAQueryEnhancer(nn.Module):
             load_in_8bit=True,  # 使用8位量化
             torch_dtype=torch.float16  # 使用半精度
         )
+
+        # Add this before creating the LoRA config
+        print("Available modules in the model:")
+        for name, _ in self.base_model.named_modules():
+            if any(keyword in name for keyword in ['attn', 'attention', 'proj', 'mlp']):
+                print(name)
         
         # 确保模型配置有pad_token_id
         self.base_model.config.pad_token_id = self.tokenizer.pad_token_id
         
         # 配置LoRA
         print("正在应用LoRA适配器...")
+        # In models/qwen_lora.py, around line 46-50
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=lora_r,                     # LoRA秩
             lora_alpha=lora_alpha,        # LoRA缩放因子
             lora_dropout=lora_dropout,    # LoRA dropout
             bias="none",                  # 不要训练偏置项
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # 针对注意力层
+            # Change this line to use Qwen's actual module names
+            target_modules=["c_attn", "c_proj", "w1", "w2"],  # For Qwen
         )
         
         # 将LoRA应用到模型
