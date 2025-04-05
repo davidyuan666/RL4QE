@@ -24,6 +24,9 @@ class QwenQueryEnhancer(nn.Module):
             cache_dir="huggingface_cache",
             device_map="auto"
         )
+        # Ensure model is aware of padding token
+        if self.model.config.pad_token_id is None:
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
         
     def forward(self, queries: List[str]) -> List[str]:
         # 添加系统提示和任务描述
@@ -34,7 +37,13 @@ Enhanced query:"""
         enhanced_queries = []
         for query in queries:
             prompt = prompt_template.format(query=query)
-            # Ensure pad_token_id is explicitly passed
+            
+            # Double-check pad token is set before tokenization
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+                
+            # Tokenize the input
             inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
