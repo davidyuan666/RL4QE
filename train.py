@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 import json
 from models.t5small_huggingface import T5SmallQueryEnhancer
-from models.qwen_vllm import QwenQueryEnhancer
+from models.qwen import QwenQueryEnhancer
 from llm.deepseek import DeepseekAPI
 from utils.reward_util import RewardCalculator
 
