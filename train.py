@@ -23,9 +23,8 @@ class RLTrainer:
                original_query: str,
                ground_truth: str) -> Tuple[float, str]:
         # 1. Generate enhanced query and get loss
-        output = self.query_enhancer.forward_with_loss([original_query])
-        enhanced_query = output['generated_text'][0]
-        model_loss = output['loss']
+        model_loss, enhanced_queries = self.query_enhancer.forward_with_loss([original_query])
+        enhanced_query = enhanced_queries[0]  # Get the first query since we only input one
 
         # 2. Get Deepseek response
         response = self.deepseek_api.get_response(enhanced_query)
