@@ -11,9 +11,10 @@ class QwenQueryEnhancer(nn.Module):
             trust_remote_code=True,
             cache_dir="huggingface_cache"
         )
-        # Configure padding token
+                # For Qwen, we need to set pad_token to an existing token
         if self.tokenizer.pad_token is None:
-            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            
             
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -21,8 +22,7 @@ class QwenQueryEnhancer(nn.Module):
             cache_dir="huggingface_cache",
             device_map="auto"  # 自动处理模型加载到GPU/CPU
         )
-        # Resize model embeddings to account for new padding token
-        self.model.resize_token_embeddings(len(self.tokenizer))
+
         
     def forward(self, queries: List[str]) -> List[str]:
         # 添加系统提示和任务描述
