@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM,AutoModelForSeq2SeqGeneration
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from typing import List
 import torch.nn as nn
 
