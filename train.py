@@ -26,6 +26,8 @@ class RLTrainer:
         output = self.query_enhancer.forward_with_loss([original_query])
         enhanced_query = output['generated_text'][0]
         model_loss = output['loss']
+
+        print(f'enhanced_query: {enhanced_query}')
         
         # 2. Get Deepseek response
         response = self.deepseek_api.get_response(enhanced_query)
