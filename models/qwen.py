@@ -6,27 +6,31 @@ import torch
 class QwenQueryEnhancer(nn.Module):
     def __init__(self, model_name="Qwen/Qwen-7B"):
         super().__init__()
+        # Load tokenizer with explicitly added pad_token
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name, 
             trust_remote_code=True,
-            cache_dir="huggingface_cache"
+            cache_dir="huggingface_cache",
+            padding_side="right"  # Ensure padding is on the right
         )
         
-        # Explicitly set the pad token to be the eos token
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        # Ensure the pad_token_id is set properly
-        self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-            
-        # Make sure the model is updated with the new token
+        # Add special padding token
+        special_tokens_dict = {'pad_token': '<PAD>'}
+        num_added_toks = self.tokenizer.add_special_tokens(special_tokens_dict)
+        
+        # Make sure model is updated with the new token
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=True,
             cache_dir="huggingface_cache",
             device_map="auto"
         )
-        # Ensure model is aware of padding token
-        if self.model.config.pad_token_id is None:
-            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        
+        # Resize token embeddings to accommodate the new padding token
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        
+        # Update model config with pad token ID
+        self.model.config.pad_token_id = self.tokenizer.pad_token_id
         
     def forward(self, queries: List[str]) -> List[str]:
         # 添加系统提示和任务描述
@@ -38,13 +42,14 @@ Enhanced query:"""
         for query in queries:
             prompt = prompt_template.format(query=query)
             
-            # Double-check pad token is set before tokenization
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-                
-            # Tokenize the input
-            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+            # Ensure padding works by using the correct tokenizer settings
+            inputs = self.tokenizer(
+                prompt, 
+                return_tensors="pt", 
+                padding="max_length", 
+                max_length=512,
+                truncation=True
+            )
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
             outputs = self.model.generate(
