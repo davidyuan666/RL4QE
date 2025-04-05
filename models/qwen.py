@@ -62,5 +62,40 @@ Enhanced query:"""
         return enhanced_queries
         
     def forward_with_loss(self, queries: List[str]):
-        enhanced_queries = self.forward(queries)
-        return torch.tensor(0.0, requires_grad=True), enhanced_queries
+        # Record operations for gradient calculation
+        prompt_template = """You are a query enhancement assistant. Your task is to improve the given query to make it more specific and detailed for code generation.
+    Original query: {query}
+    Enhanced query:"""
+        
+        batch_loss = torch.tensor(0.0, requires_grad=True)
+        enhanced_queries = []
+        
+        for query in queries:
+            prompt = prompt_template.format(query=query)
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            
+            # Get model outputs with loss computation
+            outputs = self.model(**inputs, labels=inputs["input_ids"])
+            # Get the loss from the model's output
+            if batch_loss.item() == 0.0:
+                batch_loss = outputs.loss
+            else:
+                batch_loss = batch_loss + outputs.loss
+            
+            # Generate enhanced query as before
+            generated = self.model.generate(
+                **inputs,
+                max_new_tokens=128,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True
+            )
+            
+            enhanced_query = self.tokenizer.decode(generated[0], skip_special_tokens=True)
+            enhanced_query = enhanced_query.split("Enhanced query:")[-1].strip()
+            enhanced_queries.append(enhanced_query)
+        
+        # Average the loss over the batch
+        batch_loss = batch_loss / len(queries)
+        return batch_loss, enhanced_queries
