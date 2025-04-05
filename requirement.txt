@@ -3,3 +3,4 @@ transformers
 requests 
 numpy
 openai
+python-dotenv

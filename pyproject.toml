@@ -13,6 +13,7 @@ dependencies = [
     "requests",
     "numpy",
     "openai",
+    "python-dotenv"
 ]
 
 [tool.hatch.metadata]
