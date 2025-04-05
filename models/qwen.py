@@ -14,9 +14,8 @@ class QwenQueryEnhancer(nn.Module):
         # For Qwen, we need to set pad_token to an existing token
         # Make sure the pad token is properly set and persists
         if self.tokenizer.pad_token is None:
-            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            # Alternatively, you can use:
-            # self.tokenizer.pad_token = self.tokenizer.eos_token
+            # Qwen doesn't support adding custom special tokens
+            self.tokenizer.pad_token = self.tokenizer.eos_token
             
         # Make sure the model is updated with the new token
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -25,8 +24,7 @@ class QwenQueryEnhancer(nn.Module):
             cache_dir="huggingface_cache",
             device_map="auto"
         )
-        # Resize token embeddings to account for new pad token if you used add_special_tokens
-        self.model.resize_token_embeddings(len(self.tokenizer))
+        # No need to resize token embeddings as we're using an existing token
         
     def forward(self, queries: List[str]) -> List[str]:
         # 添加系统提示和任务描述
