@@ -1,7 +1,7 @@
 import time
 import torch.nn as nn
 from typing import List, Tuple, Dict, Any, Optional
-from models.t5small_huggingface import T5SmallQueryEnhancer
+from ..models.t5small_huggingface import T5SmallQueryEnhancer
 
 def test_model(model: nn.Module, 
                test_cases: List[str], 
