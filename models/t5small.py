@@ -5,8 +5,8 @@ import torch.nn as nn
 class T5SmallQueryEnhancer(nn.Module):
     def __init__(self, model_name="t5-small"):
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="cache")
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir="cache")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="huggingface_cache")
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir="huggingface_cache")
         
     def forward(self, queries: List[str]) -> List[str]:
         inputs = self.tokenizer(queries, return_tensors="pt", padding=True, truncation=True)
