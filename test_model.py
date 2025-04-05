@@ -3,7 +3,6 @@ import torch.nn as nn
 from typing import List, Tuple, Dict, Any, Optional, Callable
 from models.t5small_huggingface import T5SmallQueryEnhancer
 from models.qwen import QwenQueryEnhancer
-from models.prophetnet import ProphetNetQueryEnhancer
 
 def test_model(model: nn.Module, 
                test_cases: List[str], 
@@ -155,11 +154,6 @@ def test_qwen():
     return test_model_with_configurations(QwenQueryEnhancer)
 
 
-def test_prophetnet():
-    """测试ProphetNet模型"""
-    return test_model_with_configurations(ProphetNetQueryEnhancer)
-
-
 def test_all_models():
     """测试所有可用模型"""
     print("====== 开始测试所有模型 ======")
@@ -173,11 +167,7 @@ def test_all_models():
     # 测试Qwen模型
     print("\n====== 测试Qwen模型 ======")
     results["Qwen"] = test_qwen()
-    
-    # 测试ProphetNet模型
-    print("\n====== 测试ProphetNet模型 ======")
-    results["ProphetNet"] = test_prophetnet()
-    
+
     # 比较不同模型的性能
     print("\n====== 各模型性能比较 ======")
     for model_name, model_results in results.items():
