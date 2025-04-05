@@ -41,34 +41,3 @@ class T5SmallQueryEnhancer(nn.Module):
         enhanced_queries = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
         
         return outputs.loss, enhanced_queries
-    
-
-
-if __name__ == "__main__":
-    # 创建模型实例
-    model = T5SmallQueryEnhancer()
-    
-    # 测试样例查询
-    test_queries = [
-        "如何学习python",
-        "推荐一本机器学习的书",
-        "什么是强化学习"
-    ]
-    
-    print("====== 测试forward方法 ======")
-    enhanced = model.forward(test_queries)
-    
-    # 打印输入和输出对比
-    for i, (query, result) in enumerate(zip(test_queries, enhanced)):
-        print(f"\n样例 {i+1}:")
-        print(f"输入: {query}")
-        print(f"输出: {result}")
-    
-    print("\n====== 测试forward_with_loss方法 ======")
-    loss, enhanced_with_loss = model.forward_with_loss(test_queries)
-    print(f"损失值: {loss.item()}")
-    
-    for i, (query, result) in enumerate(zip(test_queries, enhanced_with_loss)):
-        print(f"\n样例 {i+1}:")
-        print(f"输入: {query}")
-        print(f"输出: {result}")
