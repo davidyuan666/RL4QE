@@ -40,7 +40,7 @@ class RLTrainer:
         loss.backward()
         self.optimizer.step()
         
-        return reward, enhanced_query
+        return reward, enhanced_query,response
 
 def main():
     # 初始化组件
@@ -62,11 +62,11 @@ def main():
     for epoch in range(num_epochs):
         total_reward = 0
         for data in training_data:
-            reward, enhanced_query = trainer.train_step(
+            reward, enhanced_query,response = trainer.train_step(
                 data["query"],
                 data["ground_truth"]
             )
-            print(f"Epoch {epoch + 1}, Reward: {reward:.4f}, original Query: {data['query']}, Enhanced Query: {enhanced_query}")
+            print(f"Epoch {epoch + 1}, Reward: {reward:.4f}, original Query: {data['query']}, Enhanced Query: {enhanced_query}, Response: {response}")
             total_reward += reward
             
         avg_reward = total_reward / len(training_data)
