@@ -14,13 +14,38 @@ class QwenQueryEnhancer(nn.Module):
         # For Qwen, we need to set pad_token to an existing token
         self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            cache_dir="huggingface_cache",
-            device_map="auto"  # 自动处理模型加载到GPU/CPU
-        )
-
+        # Disable Flash Attention to avoid CUDA symbol errors
+        try:
+            torch.cuda.empty_cache()
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                cache_dir="huggingface_cache",
+                device_map="auto",
+                # Explicitly disable flash attention
+                attn_implementation="eager",
+                torch_dtype=torch.bfloat16  # Use lower precision for memory efficiency
+            )
+            print("Successfully loaded Qwen model with standard attention")
+        except Exception as e:
+            print(f"Standard model loading failed: {e}")
+            print("Trying with 8-bit quantization")
+            
+            # Try 8-bit quantization as fallback
+            try:
+                import bitsandbytes as bnb
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    cache_dir="huggingface_cache",
+                    device_map="auto",
+                    load_in_8bit=True
+                )
+                print("Successfully loaded 8-bit quantized model")
+            except Exception as e:
+                print(f"8-bit quantization failed: {e}")
+                print("Try using a smaller model or check CUDA installation")
+                raise
         
     def forward(self, queries: List[str]) -> List[str]:
         # 添加系统提示和任务描述
@@ -31,23 +56,28 @@ Enhanced query:"""
         enhanced_queries = []
         for query in queries:
             prompt = prompt_template.format(query=query)
-            # Remove padding=True since it's causing issues
-            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-            
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=128,
-                temperature=0.7,
-                top_p=0.9,
-                do_sample=True,
-                eos_token_id=self.tokenizer.eos_token_id
-            )
+            # Process one at a time to save memory
+            with torch.no_grad():  # Disable gradient calculation
+                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
+                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+                
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=128,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
             
             enhanced_query = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             # 移除原始提示，只保留生成的部分
             enhanced_query = enhanced_query.split("Enhanced query:")[-1].strip()
             enhanced_queries.append(enhanced_query)
+            
+            # Clear memory after each generation
+            del outputs, inputs
+            torch.cuda.empty_cache()
             
         return enhanced_queries
         
