@@ -62,7 +62,5 @@ Enhanced query:"""
         return enhanced_queries
         
     def forward_with_loss(self, queries: List[str]):
-        # 对于Qwen这样的大模型，我们可能不需要传统的loss计算
-        # 直接返回生成的结果和一个占位符loss
         enhanced_queries = self.forward(queries)
-        return torch.tensor(0.0), enhanced_queries
+        return torch.tensor(0.0, requires_grad=True), enhanced_queries
