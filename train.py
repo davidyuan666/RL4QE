@@ -20,21 +20,23 @@ class RLTrainer:
         self.optimizer = optim.Adam(query_enhancer.parameters(), lr=learning_rate)
         
     def train_step(self, 
-                   original_query: str,
-                   ground_truth: str) -> Tuple[float, str]:
-        # 1. 生成增强的query
-        enhanced_query = self.query_enhancer([original_query])[0]
+               original_query: str,
+               ground_truth: str) -> Tuple[float, str]:
+        # 1. Generate enhanced query and get loss
+        output = self.query_enhancer.forward_with_loss([original_query])
+        enhanced_query = output['generated_text'][0]
+        model_loss = output['loss']
         
-        # 2. 获取Deepseek响应
+        # 2. Get Deepseek response
         response = self.deepseek_api.get_response(enhanced_query)
         
-        # 3. 计算奖励
+        # 3. Calculate reward
         reward = self.reward_calculator.calculate(response, ground_truth)
         
-        # 4. 计算策略梯度并更新模型
+        # 4. Calculate policy gradient and update model
         self.optimizer.zero_grad()
-        # 使用REINFORCE算法
-        loss = -torch.mean(torch.tensor(reward) * self.query_enhancer.model.loss)
+        # Use REINFORCE algorithm with the properly captured loss
+        loss = -torch.mean(torch.tensor(reward) * model_loss)
         loss.backward()
         self.optimizer.step()
         
