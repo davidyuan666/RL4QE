@@ -241,7 +241,7 @@ def main():
     
     # 1. 加载和预处理数据集
     print("正在加载DS1000数据集...")
-    with open("dataset/ds1000.jsonl", "r") as f:
+    with open("dataset/train.jsonl", "r") as f:
         lines = f.readlines()
         raw_training_data = [json.loads(line) for line in lines]
 
@@ -274,7 +274,7 @@ def main():
                     idx
                 )
                 print(f"Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
-                print(f"Original Query: {data['query']}")
+                print(f"Original Query: {data['prompt']}")
                 print(f"Enhanced Query: {enhanced_query}")
                 print(f"Generated Code: {generated_code[:100]}..." if len(generated_code) > 100 else f"Generated Code: {generated_code}")
                 print("-" * 50)
