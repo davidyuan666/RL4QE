@@ -274,6 +274,9 @@ def main():
                     idx
                 )
                 print(f"=> Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
+                with open("logs/log.txt", "a") as f:
+                    f.write(f"Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}\n")
+                
                 # print(f"Original Query: {data['prompt']}")
                 # print(f"Enhanced Query: {enhanced_query}")
                 # print(f"Generated Code: {generated_code[:100]}..." if len(generated_code) > 100 else f"Generated Code: {generated_code}")
