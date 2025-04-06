@@ -239,8 +239,9 @@ def main():
         start_epoch, _ = trainer.load_checkpoint(resume_checkpoint)
         start_epoch += 1  # 从下一个epoch开始
     
-    with open("dataset/train.json", "r") as f:
-        training_data = json.load(f)
+    with open("dataset/ds1000.jsonl", "r") as f:
+        lines = f.readlines()
+        training_data = [json.loads(line) for line in lines]
     
     # 训练循环
     num_epochs = 10
@@ -255,8 +256,8 @@ def main():
         for idx, data in enumerate(training_data):
             try:
                 reward, enhanced_query, generated_code = trainer.train_step(
-                    data["query"],
-                    data["ground_truth"],
+                    data["prompt"],
+                    data["reference_code"],
                     idx
                 )
                 print(f"Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
