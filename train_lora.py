@@ -239,10 +239,23 @@ def main():
         start_epoch, _ = trainer.load_checkpoint(resume_checkpoint)
         start_epoch += 1  # 从下一个epoch开始
     
+    # 1. 加载和预处理数据集
+    print("正在加载DS1000数据集...")
     with open("dataset/ds1000.jsonl", "r") as f:
         lines = f.readlines()
-        training_data = [json.loads(line) for line in lines]
-    
+        raw_training_data = [json.loads(line) for line in lines]
+
+    # 添加数据预处理和分析步骤
+    training_data = []
+    for idx, item in enumerate(raw_training_data):
+        # 确保数据包含所有必要字段
+        if "prompt" not in item or "reference_code" not in item:
+            print(f"警告: 跳过样本 {idx+1}，缺少必要字段")
+            continue
+
+        training_data.append(item)
+        
+        
     # 训练循环
     num_epochs = 10
     save_frequency = 2  # 每隔多少个epoch保存一次检查点
