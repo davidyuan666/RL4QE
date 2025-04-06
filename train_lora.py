@@ -273,11 +273,11 @@ def main():
                     data["reference_code"],
                     idx
                 )
-                print(f"Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
-                print(f"Original Query: {data['prompt']}")
-                print(f"Enhanced Query: {enhanced_query}")
-                print(f"Generated Code: {generated_code[:100]}..." if len(generated_code) > 100 else f"Generated Code: {generated_code}")
-                print("-" * 50)
+                print(f"=> Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
+                # print(f"Original Query: {data['prompt']}")
+                # print(f"Enhanced Query: {enhanced_query}")
+                # print(f"Generated Code: {generated_code[:100]}..." if len(generated_code) > 100 else f"Generated Code: {generated_code}")
+                # print("-" * 50)
                 total_reward += reward
                 
                 # 每处理一定数量样本后手动执行垃圾回收
@@ -296,7 +296,7 @@ def main():
                     raise e
             
         avg_reward = total_reward / len(training_data)
-        print(f"Epoch {epoch + 1}, Average Reward: {avg_reward:.4f}")
+        print(f"[*] Epoch {epoch + 1}, Average Reward: {avg_reward:.4f}")
         
         # 保存最新检查点
         epoch_checkpoint_dir = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}")
