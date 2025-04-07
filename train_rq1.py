@@ -397,7 +397,6 @@ def load_jsonl_data(file_path):
 
 
 def main():
-
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="训练RL模型")
     parser.add_argument("--reward-method", type=str, default="overlap", 
