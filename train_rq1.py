@@ -407,8 +407,6 @@ def main():
                        help="训练的轮数")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4,
                        help="梯度累积步数")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen-7B",
-                       help="模型名称")
     args = parser.parse_args()
 
 
@@ -426,7 +424,7 @@ def main():
     
     # 初始化组件 - 使用LoRA版本的Qwen
     print("初始化LoRA增强的Qwen模型...")
-    query_enhancer = QwenLoRAQueryEnhancer(model_name=args.model_name)
+    query_enhancer = QwenLoRAQueryEnhancer(model_name=os.getenv("MODEL_NAME"))
     
     deepseek_api = DeepseekAPI()
     reward_calculator = RewardCalculator(method=args.reward_method)
