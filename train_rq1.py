@@ -1,4 +1,3 @@
-
 from models.qwen_lora import QwenLoRAQueryEnhancer
 from llm.deepseek import DeepseekAPI
 from utils.reward_util import RewardCalculator
@@ -7,7 +6,9 @@ import torch
 import os
 import gc
 import json
-from typing import Tuple
+import time
+from typing import Tuple, List, Dict
+from datetime import datetime
 
 
 class RLTrainer:
@@ -17,6 +18,7 @@ class RLTrainer:
                  reward_calculator: RewardCalculator,
                  learning_rate: float = 1e-4,
                  checkpoint_dir: str = "checkpoints",
+                 log_dir: str = "logs",
                  gradient_accumulation_steps: int = 1):
         self.query_enhancer = query_enhancer
         self.deepseek_api = deepseek_api
@@ -30,8 +32,27 @@ class RLTrainer:
             self.optimizer = optim.Adam(query_enhancer.parameters(), lr=learning_rate)
             
         self.checkpoint_dir = checkpoint_dir
-        # 确保检查点目录存在
+        self.log_dir = log_dir
+        # 确保检查点和日志目录存在
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # 创建训练记录文件
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.train_log_file = os.path.join(self.log_dir, f"train_log_{timestamp}.jsonl")
+        self.val_log_file = os.path.join(self.log_dir, f"val_log_{timestamp}.jsonl")
+        self.metrics_file = os.path.join(self.log_dir, f"metrics_{timestamp}.json")
+        
+        # 初始化性能跟踪记录
+        self.metrics = {
+            "train_rewards": [],
+            "val_rewards": [],
+            "best_reward": -float('inf'),
+            "best_epoch": 0,
+            "training_time": 0,
+            "start_time": time.time()
+        }
+        
         self.best_reward = -float('inf')
         self.gradient_accumulation_steps = gradient_accumulation_steps
         
@@ -108,7 +129,98 @@ class RLTrainer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
+        # 记录训练数据
+        log_entry = {
+            "original_query": original_query,
+            "enhanced_query": enhanced_query,
+            "ground_truth": ground_truth,
+            "generated_code": generated_code,
+            "reward": reward,
+            "step": step
+        }
+        
+        with open(self.train_log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            
         return reward, enhanced_query, generated_code
+    
+    def validate(self, validation_data) -> float:
+        """对验证集进行评估"""
+        print("开始验证...")
+        self.query_enhancer.eval()  # 设置为评估模式
+        total_reward = 0.0
+        val_results = []
+        
+        with torch.no_grad():  # 不计算梯度
+            for idx, data in enumerate(validation_data):
+                try:
+                    # 提取查询和参考代码
+                    original_query = data["prompt"]
+                    ground_truth = data["reference_code"]
+                    
+                    # 生成增强查询
+                    _, enhanced_queries = self.query_enhancer.forward_with_loss([original_query])
+                    enhanced_query = enhanced_queries[0]
+                    
+                    # 获取Deepseek响应
+                    response = self.deepseek_api.get_response(enhanced_query)
+                    
+                    # 解析生成的代码
+                    generated_code = ""
+                    try:
+                        if "<answer>" in response and "</answer>" in response:
+                            generated_code = response.split("<answer>")[1].split("</answer>")[0].strip()
+                            if generated_code.startswith("```"):
+                                first_newline = generated_code.find("\n")
+                                if first_newline != -1:
+                                    last_marker = generated_code.rfind("```")
+                                    if last_marker != -1:
+                                        generated_code = generated_code[first_newline:last_marker].strip()
+                                    else:
+                                        generated_code = generated_code[first_newline:].strip()
+                    except Exception as e:
+                        print(f"验证时解析响应出错: {e}")
+                    
+                    # 计算奖励
+                    reward = self.reward_calculator.calculate(generated_code, ground_truth)
+                    total_reward += reward
+                    
+                    # 记录验证结果
+                    val_entry = {
+                        "original_query": original_query,
+                        "enhanced_query": enhanced_query,
+                        "ground_truth": ground_truth,
+                        "generated_code": generated_code,
+                        "reward": reward,
+                        "idx": idx
+                    }
+                    val_results.append(val_entry)
+                    
+                    print(f"验证样本 {idx+1}/{len(validation_data)}, Reward: {reward:.4f}")
+                    
+                    # 每处理一定数量样本后手动执行垃圾回收
+                    if (idx + 1) % 5 == 0:
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        print(f"警告: CUDA内存不足。释放缓存并跳过验证样本 {idx+1}。")
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise e
+        
+        # 保存验证结果
+        with open(self.val_log_file, "a", encoding="utf-8") as f:
+            for entry in val_results:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        
+        avg_reward = total_reward / len(validation_data) if validation_data else 0
+        print(f"验证集平均奖励: {avg_reward:.4f}")
+        return avg_reward
     
     def save_checkpoint(self, epoch, avg_reward, is_best=False):
         """保存检查点"""
@@ -201,16 +313,49 @@ class RLTrainer:
             self.best_reward = reward
             print(f"已加载检查点: {checkpoint_path}, Epoch: {epoch}, Reward: {reward:.4f}")
             return epoch, reward
+        
+    def save_metrics(self):
+        """保存训练指标数据"""
+        self.metrics["training_time"] = time.time() - self.metrics["start_time"]
+        with open(self.metrics_file, "w", encoding="utf-8") as f:
+            json.dump(self.metrics, f, ensure_ascii=False, indent=2)
+        print(f"已保存训练指标到: {self.metrics_file}")
+
+
+def load_jsonl_data(file_path):
+    """从JSONL文件加载数据"""
+    if not os.path.exists(file_path):
+        print(f"数据文件不存在: {file_path}")
+        return []
+    
+    data = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                item = json.loads(line)
+                if "prompt" in item and "reference_code" in item:
+                    data.append(item)
+                else:
+                    print(f"警告: 跳过不完整的数据项: {line[:50]}...")
+            except json.JSONDecodeError:
+                print(f"警告: 跳过无效的JSON行: {line[:50]}...")
+    
+    print(f"从 {file_path} 加载了 {len(data)} 条数据")
+    return data
+
 
 def main():
     # 设置PyTorch内存管理
     if torch.cuda.is_available():
         # 设置内存分配器以减少内存碎片
         os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-        
-    # 创建检查点目录
-    checkpoint_dir = "checkpoints"
+    
+    # 创建检查点和日志目录
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    checkpoint_dir = f"checkpoints/run_{timestamp}"
+    log_dir = f"logs/run_{timestamp}"
     os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
     
     # 初始化组件 - 使用LoRA版本的Qwen
     print("初始化LoRA增强的Qwen模型...")
@@ -227,60 +372,56 @@ def main():
         deepseek_api=deepseek_api,
         reward_calculator=reward_calculator,
         checkpoint_dir=checkpoint_dir,
+        log_dir=log_dir,
         gradient_accumulation_steps=gradient_accumulation_steps
     )
     
     # 加载检查点（如果存在）
     start_epoch = 0
-    resume_checkpoint = os.path.join(checkpoint_dir, "latest_checkpoint")
-    best_model_path = os.path.join(checkpoint_dir, "best_model")
+    latest_checkpoint = os.path.join(checkpoint_dir, "latest_checkpoint")
     
-    if os.path.exists(resume_checkpoint):
-        start_epoch, _ = trainer.load_checkpoint(resume_checkpoint)
+    if os.path.exists(latest_checkpoint):
+        start_epoch, _ = trainer.load_checkpoint(latest_checkpoint)
         start_epoch += 1  # 从下一个epoch开始
     
-    # 1. 加载和预处理数据集
-    print("正在加载DS1000数据集...")
-    with open("dataset/train.jsonl", "r") as f:
-        lines = f.readlines()
-        raw_training_data = [json.loads(line) for line in lines]
-
-    # 添加数据预处理和分析步骤
-    training_data = []
-    for idx, item in enumerate(raw_training_data):
-        # 确保数据包含所有必要字段
-        if "prompt" not in item or "reference_code" not in item:
-            print(f"警告: 跳过样本 {idx+1}，缺少必要字段")
-            continue
-
-        training_data.append(item)
-        
-        
+    # 加载训练、验证和测试数据集
+    print("正在加载数据集...")
+    train_data = load_jsonl_data("dataset/train.jsonl")
+    val_data = load_jsonl_data("dataset/val.jsonl")
+    test_data = load_jsonl_data("dataset/test.jsonl")
+    
+    # 记录数据集大小
+    dataset_info = {
+        "train_size": len(train_data),
+        "val_size": len(val_data),
+        "test_size": len(test_data),
+        "timestamp": timestamp
+    }
+    
+    with open(os.path.join(log_dir, "dataset_info.json"), "w", encoding="utf-8") as f:
+        json.dump(dataset_info, f, ensure_ascii=False, indent=2)
+    
     # 训练循环
     num_epochs = 10
-    save_frequency = 2  # 每隔多少个epoch保存一次检查点
     
     for epoch in range(start_epoch, num_epochs):
+        print(f"\n====== Epoch {epoch + 1}/{num_epochs} ======")
+        epoch_start_time = time.time()
         total_reward = 0
         
         # 确保优化器梯度清零开始新的epoch
         trainer.optimizer.zero_grad()
         
-        for idx, data in enumerate(training_data):
+        # 训练阶段
+        for idx, data in enumerate(train_data):
             try:
                 reward, enhanced_query, generated_code = trainer.train_step(
                     data["prompt"],
                     data["reference_code"],
                     idx
                 )
-                print(f"=> Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}")
-                with open("logs/log.txt", "a") as f:
-                    f.write(f"Epoch {epoch + 1}, Sample {idx+1}/{len(training_data)}, Reward: {reward:.4f}\n")
+                print(f"=> 训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)}, Reward: {reward:.4f}")
                 
-                # print(f"Original Query: {data['prompt']}")
-                # print(f"Enhanced Query: {enhanced_query}")
-                # print(f"Generated Code: {generated_code[:100]}..." if len(generated_code) > 100 else f"Generated Code: {generated_code}")
-                # print("-" * 50)
                 total_reward += reward
                 
                 # 每处理一定数量样本后手动执行垃圾回收
@@ -298,31 +439,63 @@ def main():
                 else:
                     raise e
             
-        avg_reward = total_reward / len(training_data)
-        print(f"[*] Epoch {epoch + 1}, Average Reward: {avg_reward:.4f}")
+        avg_train_reward = total_reward / len(train_data)
+        print(f"[*] Epoch {epoch + 1}, Average Train Reward: {avg_train_reward:.4f}")
+        trainer.metrics["train_rewards"].append(avg_train_reward)
         
-        # 保存最新检查点
-        epoch_checkpoint_dir = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}")
-        trainer.save_checkpoint(epoch + 1, avg_reward)
+        # 验证阶段
+        val_reward = trainer.validate(val_data)
+        trainer.metrics["val_rewards"].append(val_reward)
         
-        # 将最新检查点链接为latest_checkpoint
-        latest_checkpoint = os.path.join(checkpoint_dir, "latest_checkpoint")
-        if os.path.exists(latest_checkpoint) and os.path.isdir(latest_checkpoint):
+        # 保存每个epoch的检查点
+        trainer.save_checkpoint(epoch + 1, val_reward)
+        
+        # 将最新检查点作为恢复点
+        latest_checkpoint_dir = os.path.join(checkpoint_dir, "latest_checkpoint")
+        if os.path.exists(latest_checkpoint_dir) and os.path.isdir(latest_checkpoint_dir):
             import shutil
-            shutil.rmtree(latest_checkpoint)
-        elif os.path.exists(latest_checkpoint):
-            os.remove(latest_checkpoint)
+            shutil.rmtree(latest_checkpoint_dir)
+        elif os.path.exists(latest_checkpoint_dir):
+            os.remove(latest_checkpoint_dir)
             
         # 复制最新检查点作为恢复点
+        epoch_checkpoint_dir = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}")
         if os.path.exists(epoch_checkpoint_dir) and os.path.isdir(epoch_checkpoint_dir):
             import shutil
-            shutil.copytree(epoch_checkpoint_dir, latest_checkpoint)
+            shutil.copytree(epoch_checkpoint_dir, latest_checkpoint_dir)
         
         # 如果是最佳模型，则标记保存
-        if avg_reward > trainer.best_reward:
-            trainer.best_reward = avg_reward
-            trainer.save_checkpoint(epoch + 1, avg_reward, is_best=True)
-            print(f"新的最佳模型! Reward: {avg_reward:.4f}")
+        if val_reward > trainer.best_reward:
+            trainer.best_reward = val_reward
+            trainer.metrics["best_reward"] = val_reward
+            trainer.metrics["best_epoch"] = epoch + 1
+            trainer.save_checkpoint(epoch + 1, val_reward, is_best=True)
+            print(f"新的最佳模型! Validation Reward: {val_reward:.4f}")
+        
+        epoch_time = time.time() - epoch_start_time
+        print(f"Epoch {epoch + 1} 完成，用时: {epoch_time:.2f}秒")
+        
+        # 每个epoch后保存指标
+        trainer.save_metrics()
+    
+    # 训练结束后，使用测试集评估最终模型
+    print("\n====== 使用测试集评估最终模型 ======")
+    
+    # 加载最佳模型
+    best_model_dir = os.path.join(checkpoint_dir, "best_model")
+    if os.path.exists(best_model_dir):
+        trainer.load_checkpoint(best_model_dir)
+        print("已加载最佳模型进行测试评估")
+    
+    # 在测试集上评估
+    test_reward = trainer.validate(test_data)
+    trainer.metrics["test_reward"] = test_reward
+    print(f"最终测试集评估结果 - Average Reward: {test_reward:.4f}")
+    
+    # 保存最终指标
+    trainer.save_metrics()
+    print("\n====== 训练完成 ======")
+
 
 if __name__ == "__main__":
     main()
