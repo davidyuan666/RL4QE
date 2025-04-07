@@ -71,7 +71,7 @@ def main():
     plt.rcParams['font.size'] = 12
     
     # Find JSONL files in the result directory
-    result_dir = 'result'
+    result_dir = 'result/rouge'
     json_files = [f for f in os.listdir(result_dir) if f.endswith('.jsonl')]
     
     # Create output directory for plots
