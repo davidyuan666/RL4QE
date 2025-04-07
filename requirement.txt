@@ -16,3 +16,4 @@ vllm
 bitsandbytes
 peft
 rouge
+nltk
