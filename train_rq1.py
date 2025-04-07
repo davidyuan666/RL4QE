@@ -9,7 +9,9 @@ import json
 import time
 from typing import Tuple, List, Dict
 from datetime import datetime
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class RLTrainer:
     def __init__(self, 
@@ -363,6 +365,13 @@ def main():
     
     deepseek_api = DeepseekAPI()
     reward_calculator = RewardCalculator()
+    reward_method = reward_calculator.get_method()
+    
+    # 创建reward method子目录
+    reward_checkpoint_dir = os.path.join(checkpoint_dir, reward_method)
+    reward_log_dir = os.path.join(log_dir, reward_method)
+    os.makedirs(reward_checkpoint_dir, exist_ok=True)
+    os.makedirs(reward_log_dir, exist_ok=True)
     
     # 配置梯度累积步数
     gradient_accumulation_steps = 4  # 增大以减少内存使用
@@ -371,14 +380,14 @@ def main():
         query_enhancer=query_enhancer,
         deepseek_api=deepseek_api,
         reward_calculator=reward_calculator,
-        checkpoint_dir=checkpoint_dir,
-        log_dir=log_dir,
+        checkpoint_dir=reward_checkpoint_dir,  # 使用包含reward method的目录
+        log_dir=reward_log_dir,  # 使用包含reward method的目录
         gradient_accumulation_steps=gradient_accumulation_steps
     )
     
     # 加载检查点（如果存在）
     start_epoch = 0
-    latest_checkpoint = os.path.join(checkpoint_dir, "latest_checkpoint")
+    latest_checkpoint = os.path.join(reward_checkpoint_dir, "latest_checkpoint")
     
     if os.path.exists(latest_checkpoint):
         start_epoch, _ = trainer.load_checkpoint(latest_checkpoint)
@@ -398,11 +407,11 @@ def main():
         "timestamp": timestamp
     }
     
-    with open(os.path.join(log_dir, "dataset_info.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(reward_log_dir, "dataset_info.json"), "w", encoding="utf-8") as f:
         json.dump(dataset_info, f, ensure_ascii=False, indent=2)
-    
+        
     # 训练循环
-    num_epochs = 10
+    num_epochs = os.environ.get("NUM_EPOCHS", 10)
     
     for epoch in range(start_epoch, num_epochs):
         print(f"\n====== Epoch {epoch + 1}/{num_epochs} ======")
@@ -420,7 +429,7 @@ def main():
                     data["reference_code"],
                     idx
                 )
-                print(f"=> 训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)}, Reward: {reward:.4f}")
+                print(f"=> 训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)},Reward method: {reward_method}, Reward: {reward:.4f}")
                 
                 total_reward += reward
                 
@@ -451,7 +460,7 @@ def main():
         trainer.save_checkpoint(epoch + 1, val_reward)
         
         # 将最新检查点作为恢复点
-        latest_checkpoint_dir = os.path.join(checkpoint_dir, "latest_checkpoint")
+        latest_checkpoint_dir = os.path.join(checkpoint_dir, reward_method, "latest_checkpoint")
         if os.path.exists(latest_checkpoint_dir) and os.path.isdir(latest_checkpoint_dir):
             import shutil
             shutil.rmtree(latest_checkpoint_dir)
@@ -459,7 +468,7 @@ def main():
             os.remove(latest_checkpoint_dir)
             
         # 复制最新检查点作为恢复点
-        epoch_checkpoint_dir = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}")
+        epoch_checkpoint_dir = os.path.join(checkpoint_dir,reward_method, f"checkpoint_epoch_{epoch+1}")
         if os.path.exists(epoch_checkpoint_dir) and os.path.isdir(epoch_checkpoint_dir):
             import shutil
             shutil.copytree(epoch_checkpoint_dir, latest_checkpoint_dir)
@@ -482,7 +491,7 @@ def main():
     print("\n====== 使用测试集评估最终模型 ======")
     
     # 加载最佳模型
-    best_model_dir = os.path.join(checkpoint_dir, "best_model")
+    best_model_dir = os.path.join(checkpoint_dir, reward_method, "best_model")
     if os.path.exists(best_model_dir):
         trainer.load_checkpoint(best_model_dir)
         print("已加载最佳模型进行测试评估")

@@ -14,6 +14,10 @@ class RewardCalculator:
             method: 奖励计算方法，可选值有 "overlap", "rouge", "bleu", "exact_match", "f1"
         """
         self.method = method
+
+
+    def get_method(self):
+        return self.method
         
     def calculate(self, response: str, ground_truth: str) -> float:
         """根据选择的方法计算奖励
