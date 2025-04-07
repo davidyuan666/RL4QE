@@ -58,11 +58,22 @@ class RewardCalculator:
     def _rouge_score(self, response: str, ground_truth: str) -> float:
         """计算ROUGE-L分数"""
         try:
+            # Handle empty responses or ground truths
+            if not response or not ground_truth:
+                return 0.0
+                
+            # Add a space if response or ground_truth is too short
+            if len(response.strip()) < 2:
+                response = response.strip() + " dummy"
+            if len(ground_truth.strip()) < 2:
+                ground_truth = ground_truth.strip() + " dummy"
+                
             rouge = Rouge()
             scores = rouge.get_scores(response, ground_truth)
             return scores[0]["rouge-l"]["f"]
-        except ImportError:
-            print("请安装rouge库: pip install rouge")
+        except Exception as e:
+            print(f"Rouge计算错误: {e}")
+            # Fallback to overlap score when rouge fails
             return self._overlap_score(response, ground_truth)
     
     def _bleu_score(self, response: str, ground_truth: str) -> float:
