@@ -11,6 +11,7 @@ from typing import Tuple, List, Dict
 from datetime import datetime
 from dotenv import load_dotenv
 import argparse
+from utils.code_metric import CodeMetricsCalculator
 
 load_dotenv()
 
@@ -55,6 +56,17 @@ class RLTrainer:
             "training_time": 0,
             "start_time": time.time()
         }
+
+        self.metrics.update({
+            "val_precision": [],
+            "val_recall": [],
+            "val_f1": [],
+            "val_css": [],
+            "test_precision": 0.0,
+            "test_recall": 0.0,
+            "test_f1": 0.0,
+            "test_css": 0.0
+        })
         
         self.best_reward = -float('inf')
         self.gradient_accumulation_steps = gradient_accumulation_steps
@@ -153,6 +165,15 @@ class RLTrainer:
         self.query_enhancer.eval()  # 设置为评估模式
         total_reward = 0.0
         val_results = []
+
+        # 添加指标累计器
+        total_metrics = {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "css": 0.0
+        }
+    
         
         with torch.no_grad():  # 不计算梯度
             for idx, data in enumerate(validation_data):
@@ -188,6 +209,12 @@ class RLTrainer:
                     reward = self.reward_calculator.calculate(generated_code, ground_truth)
                     total_reward += reward
                     
+                    # 计算其他代码指标
+                    metrics = CodeMetricsCalculator.calculate_metrics(generated_code, ground_truth)
+                    for key, value in metrics.items():
+                        total_metrics[key] += value
+
+
                     # 记录验证结果
                     val_entry = {
                         "original_query": original_query,
@@ -197,10 +224,13 @@ class RLTrainer:
                         "reward": reward,
                         "idx": idx
                     }
+                    # 添加新指标到验证结果
+                    val_entry.update(metrics)
                     val_results.append(val_entry)
                     
-                    print(f"验证样本 {idx+1}/{len(validation_data)}, Reward: {reward:.4f}")
-                    
+                    # 打印指标信息
+                    print(f"验证样本 {idx+1}/{len(validation_data)}, Reward: {reward:.4f}, F1: {metrics['f1']:.4f}, CSS: {metrics['css']:.4f}")
+                
                     # 每处理一定数量样本后手动执行垃圾回收
                     if (idx + 1) % 5 == 0:
                         gc.collect()
@@ -221,8 +251,27 @@ class RLTrainer:
             for entry in val_results:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         
-        avg_reward = total_reward / len(validation_data) if validation_data else 0
+        # 计算平均指标
+        dataset_size = len(validation_data) if validation_data else 1
+        avg_reward = total_reward / dataset_size
+        avg_metrics = {key: value / dataset_size for key, value in total_metrics.items()}
+        
+        # 更新累计指标结果
+        if "val_metrics" not in self.metrics:
+            self.metrics["val_metrics"] = []
+        
+        self.metrics["val_metrics"].append(avg_metrics)
+        self.metrics["val_precision"].append(avg_metrics["precision"])
+        self.metrics["val_recall"].append(avg_metrics["recall"])
+        self.metrics["val_f1"].append(avg_metrics["f1"])
+        self.metrics["val_css"].append(avg_metrics["css"])
+        
+        # 打印结果
         print(f"验证集平均奖励: {avg_reward:.4f}")
+        print(f"验证集平均指标: Precision: {avg_metrics['precision']:.4f}, " + 
+            f"Recall: {avg_metrics['recall']:.4f}, F1: {avg_metrics['f1']:.4f}, " + 
+            f"CSS: {avg_metrics['css']:.4f}")
+        
         return avg_reward
     
     def save_checkpoint(self, epoch, avg_reward, is_best=False):
@@ -516,8 +565,20 @@ def main():
     # 在测试集上评估
     test_reward = trainer.validate(test_data)
     trainer.metrics["test_reward"] = test_reward
-    print(f"最终测试集评估结果 - Average Reward: {test_reward:.4f}")
-    
+
+    # 添加最新验证指标到test指标
+    if trainer.metrics["val_metrics"]:
+        latest_metrics = trainer.metrics["val_metrics"][-1]
+        trainer.metrics["test_precision"] = latest_metrics["precision"]
+        trainer.metrics["test_recall"] = latest_metrics["recall"]
+        trainer.metrics["test_f1"] = latest_metrics["f1"]
+        trainer.metrics["test_css"] = latest_metrics["css"]
+        
+        # 打印完整测试结果
+        print(f"最终测试集评估结果 - Average Reward: {test_reward:.4f}")
+        print(f"最终测试集评估结果 - Precision: {latest_metrics['precision']:.4f}, " + 
+            f"Recall: {latest_metrics['recall']:.4f}, F1: {latest_metrics['f1']:.4f}, " + 
+            f"CSS: {latest_metrics['css']:.4f}")
     # 保存最终指标
     trainer.save_metrics()
     print("\n====== 训练完成 ======")
