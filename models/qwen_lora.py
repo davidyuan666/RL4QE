@@ -46,14 +46,24 @@ class QwenLoRAQueryEnhancer(nn.Module):
         # 配置LoRA
         print("正在应用LoRA适配器...")
         # In models/qwen_lora.py, around line 46-50
+        # lora_config = LoraConfig(
+        #     task_type=TaskType.CAUSAL_LM,
+        #     r=lora_r,                     # LoRA秩
+        #     lora_alpha=lora_alpha,        # LoRA缩放因子
+        #     lora_dropout=lora_dropout,    # LoRA dropout
+        #     bias="none",                  # 不要训练偏置项
+        #     # Change this line to use Qwen's actual module names
+        #     target_modules=["c_attn", "c_proj", "w1", "w2"],  # For Qwen
+        # )
+
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=lora_r,                     # LoRA秩
             lora_alpha=lora_alpha,        # LoRA缩放因子
             lora_dropout=lora_dropout,    # LoRA dropout
             bias="none",                  # 不要训练偏置项
-            # Change this line to use Qwen's actual module names
-            target_modules=["c_attn", "c_proj", "w1", "w2"],  # For Qwen
+            # Update to match Qwen1.5 architecture
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         )
         
         # 将LoRA应用到模型
