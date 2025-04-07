@@ -59,6 +59,25 @@ class RLTrainer:
         self.best_reward = -float('inf')
         self.gradient_accumulation_steps = gradient_accumulation_steps
         
+    def calculate_metrics(self, generated_code: str, ground_truth: str) -> Tuple[float, float, float]:
+        """计算精确率、召回率和F1分数"""
+        generated_tokens = set(generated_code.lower().split())
+        truth_tokens = set(ground_truth.lower().split())
+        
+        if len(generated_tokens) == 0 or len(truth_tokens) == 0:
+            return 0.0, 0.0, 0.0
+            
+        common = generated_tokens & truth_tokens
+        precision = len(common) / len(generated_tokens) if generated_tokens else 0
+        recall = len(common) / len(truth_tokens) if truth_tokens else 0
+        
+        if precision + recall == 0:
+            f1 = 0.0
+        else:
+            f1 = 2 * precision * recall / (precision + recall)
+            
+        return precision, recall, f1
+        
     def train_step(self, 
                original_query: str,
                ground_truth: str,
@@ -435,6 +454,10 @@ def main():
         epoch_start_time = time.time()
         total_reward = 0
         
+        # 初始化每20个样本的指标计算
+        batch_generated_codes = []
+        batch_ground_truths = []
+        
         # 确保优化器梯度清零开始新的epoch
         trainer.optimizer.zero_grad()
         
@@ -449,6 +472,34 @@ def main():
                 print(f"=> 训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)},Reward method: {reward_method}, Reward: {reward:.4f}")
                 
                 total_reward += reward
+                
+                # 收集指标计算的数据
+                batch_generated_codes.append(generated_code)
+                batch_ground_truths.append(data["reference_code"])
+                
+                # 每20个样本计算一次precision, recall, f1
+                if (idx + 1) % 20 == 0:
+                    # 计算汇总指标
+                    all_precision = 0
+                    all_recall = 0
+                    all_f1 = 0
+                    
+                    for gen_code, gt_code in zip(batch_generated_codes, batch_ground_truths):
+                        precision, recall, f1 = trainer.calculate_metrics(gen_code, gt_code)
+                        all_precision += precision
+                        all_recall += recall
+                        all_f1 += f1
+                    
+                    # 计算平均值
+                    avg_precision = all_precision / len(batch_generated_codes)
+                    avg_recall = all_recall / len(batch_generated_codes)
+                    avg_f1 = all_f1 / len(batch_generated_codes)
+                    
+                    print(f"样本 {idx-19}-{idx+1} 平均指标: Precision: {avg_precision:.4f}, Recall: {avg_recall:.4f}, F1: {avg_f1:.4f}")
+                    
+                    # 清空收集的数据
+                    batch_generated_codes = []
+                    batch_ground_truths = []
                 
                 # 每处理一定数量样本后手动执行垃圾回收
                 if (idx + 1) % 5 == 0:
