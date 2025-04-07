@@ -1,6 +1,7 @@
 from rouge import Rouge
 import nltk
 from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.bleu_score import SmoothingFunction
 import os
 from dotenv import load_dotenv
 
@@ -82,8 +83,12 @@ class RewardCalculator:
             response_tokens = response.lower().split()
             reference_tokens = [ground_truth.lower().split()]
             
+            # 使用平滑函数来处理没有n-gram重叠的情况
+            smoothing = SmoothingFunction().method1
+            
             return sentence_bleu(reference_tokens, response_tokens, 
-                                weights=(0.25, 0.25, 0.25, 0.25))
+                                weights=(0.25, 0.25, 0.25, 0.25),
+                                smoothing_function=smoothing)
         except ImportError:
             print("请安装nltk库: pip install nltk")
             return self._overlap_score(response, ground_truth)
