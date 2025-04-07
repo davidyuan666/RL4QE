@@ -26,33 +26,30 @@ def read_jsonl_data(file_path):
     
     return rewards, steps
 
-def create_loss_plot(rewards, steps, file_name, output_path):
-    """Create a loss wave plot based on rewards"""
+def create_reward_plot(rewards, steps, file_name, output_path):
+    """Create a reward wave plot"""
     plt.figure(figsize=(12, 7))
     
-    # Calculate "loss" as 1 - reward
-    losses = [1 - r for r in rewards]
-    
-    plt.plot(steps, losses, marker='o', linestyle='-', linewidth=2, markersize=8, color='red')
-    plt.title(f'Loss over Steps - {file_name}', fontsize=16)
+    plt.plot(steps, rewards, marker='o', linestyle='-', linewidth=2, markersize=8, color='blue')
+    plt.title(f'Reward over Steps - {file_name}', fontsize=16)
     plt.xlabel('Step', fontsize=14)
-    plt.ylabel('Loss (1 - Reward)', fontsize=14)
+    plt.ylabel('Reward', fontsize=14)
     plt.grid(True, alpha=0.3)
     
     # Calculate statistics
-    avg_loss = np.mean(losses)
-    median_loss = np.median(losses)
+    avg_reward = np.mean(rewards)
+    median_reward = np.median(rewards)
     
     # Add horizontal lines for statistics
-    plt.axhline(y=avg_loss, color='blue', linestyle='--', linewidth=2, 
-               label=f'Mean: {avg_loss:.4f}')
-    plt.axhline(y=median_loss, color='green', linestyle='-.', linewidth=2, 
-               label=f'Median: {median_loss:.4f}')
+    plt.axhline(y=avg_reward, color='red', linestyle='--', linewidth=2, 
+               label=f'Mean: {avg_reward:.4f}')
+    plt.axhline(y=median_reward, color='green', linestyle='-.', linewidth=2, 
+               label=f'Median: {median_reward:.4f}')
     
     # Add trend line (moving average)
-    window_size = min(5, len(losses))
+    window_size = min(5, len(rewards))
     if window_size > 1:
-        moving_avg = np.convolve(losses, np.ones(window_size)/window_size, mode='valid')
+        moving_avg = np.convolve(rewards, np.ones(window_size)/window_size, mode='valid')
         valid_steps = steps[window_size-1:]
         plt.plot(valid_steps, moving_avg, color='purple', linestyle='-', 
                 label=f'{window_size}-point Moving Avg', linewidth=3, alpha=0.7)
@@ -71,7 +68,7 @@ def main():
     plt.rcParams['font.size'] = 12
     
     # Find JSONL files in the result directory
-    result_dir = 'result/rouge'
+    result_dir = 'result/overlap'
     json_files = [f for f in os.listdir(result_dir) if f.endswith('.jsonl')]
     
     # Create output directory for plots
@@ -85,14 +82,14 @@ def main():
         if rewards:
             base_name = os.path.splitext(json_file)[0]
             
-            # Create loss plot
-            loss_path = os.path.join(output_dir, f'{base_name}_loss.png')
-            create_loss_plot(rewards, steps, json_file, loss_path)
-            print(f"Created loss plot: {loss_path}")
+            # Create reward plot
+            reward_path = os.path.join(output_dir, f'{base_name}_reward.png')
+            create_reward_plot(rewards, steps, json_file, reward_path)
+            print(f"Created reward plot: {reward_path}")
         else:
             print(f"No reward data found in {json_file}")
     
-    print("\nLoss plot creation completed.")
+    print("\nReward plot creation completed.")
 
 if __name__ == "__main__":
     main()

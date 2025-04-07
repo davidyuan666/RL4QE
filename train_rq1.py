@@ -543,6 +543,26 @@ def main():
             trainer.metrics["best_epoch"] = epoch + 1
             trainer.save_checkpoint(epoch + 1, val_reward, is_best=True)
             print(f"新的最佳模型! Validation Reward: {val_reward:.4f}")
+            
+            # 每次保存最佳模型时额外再次评估验证集结果
+            print("\n====== 对最佳模型执行验证集评估 ======")
+            best_validation_reward = trainer.validate(val_data)
+            print(f"最佳模型验证集评估结果 - Average Reward: {best_validation_reward:.4f}")
+            # 将最新评估结果保存在单独的指标中
+            trainer.metrics["best_model_validation_reward"] = best_validation_reward
+            if trainer.metrics["val_metrics"]:
+                latest_metrics = trainer.metrics["val_metrics"][-1]
+                trainer.metrics["best_model_precision"] = latest_metrics["precision"]
+                trainer.metrics["best_model_recall"] = latest_metrics["recall"]
+                trainer.metrics["best_model_f1"] = latest_metrics["f1"]
+                trainer.metrics["best_model_css"] = latest_metrics["css"]
+                print(f"最佳模型验证集评估结果 - Precision: {latest_metrics['precision']:.4f}, " + 
+                    f"Recall: {latest_metrics['recall']:.4f}, F1: {latest_metrics['f1']:.4f}, " + 
+                    f"CSS: {latest_metrics['css']:.4f}")
+                with open(os.path.join(reward_log_dir, "best_model_validation_results.json"), "w", encoding="utf-8") as f:
+                    json.dump(latest_metrics, f, ensure_ascii=False, indent=2)
+            # 保存最新的指标
+            trainer.save_metrics()
         
         epoch_time = time.time() - epoch_start_time
         print(f"Epoch {epoch + 1} 完成，用时: {epoch_time:.2f}秒")
