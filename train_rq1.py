@@ -373,7 +373,7 @@ def main():
     parser.add_argument("--reward-method", type=str, default="overlap", 
                        choices=["overlap", "rouge", "bleu", "exact_match", "f1"],
                        help="奖励计算方法")
-    parser.add_argument("--num-epochs", type=int, default=5,
+    parser.add_argument("--num-epochs", type=int, default=1,
                        help="训练的轮数")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4,
                        help="梯度累积步数")
