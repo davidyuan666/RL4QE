@@ -10,6 +10,7 @@ import time
 from typing import Tuple, List, Dict
 from datetime import datetime
 from dotenv import load_dotenv
+import argparse
 
 load_dotenv()
 
@@ -347,6 +348,21 @@ def load_jsonl_data(file_path):
 
 
 def main():
+
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="训练RL模型")
+    parser.add_argument("--reward-method", type=str, default="overlap", 
+                       choices=["overlap", "rouge", "bleu", "exact_match", "f1"],
+                       help="奖励计算方法")
+    parser.add_argument("--num-epochs", type=int, default=5,
+                       help="训练的轮数")
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=4,
+                       help="梯度累积步数")
+    parser.add_argument("--model-name", type=str, default="Qwen/Qwen-7B",
+                       help="模型名称")
+    args = parser.parse_args()
+
+
     # 设置PyTorch内存管理
     if torch.cuda.is_available():
         # 设置内存分配器以减少内存碎片
@@ -361,11 +377,12 @@ def main():
     
     # 初始化组件 - 使用LoRA版本的Qwen
     print("初始化LoRA增强的Qwen模型...")
-    query_enhancer = QwenLoRAQueryEnhancer()
+    query_enhancer = QwenLoRAQueryEnhancer(model_name=args.model_name)
     
     deepseek_api = DeepseekAPI()
-    reward_calculator = RewardCalculator()
+    reward_calculator = RewardCalculator(method=args.reward_method)
     reward_method = reward_calculator.get_method()
+    print(f"使用奖励计算方法: {reward_method}")
     
     # 创建reward method子目录
     reward_checkpoint_dir = os.path.join(checkpoint_dir, reward_method)
@@ -374,7 +391,7 @@ def main():
     os.makedirs(reward_log_dir, exist_ok=True)
     
     # 配置梯度累积步数
-    gradient_accumulation_steps = 4  # 增大以减少内存使用
+    gradient_accumulation_steps = args.gradient_accumulation_steps
     
     trainer = RLTrainer(
         query_enhancer=query_enhancer,
@@ -409,9 +426,9 @@ def main():
     
     with open(os.path.join(reward_log_dir, "dataset_info.json"), "w", encoding="utf-8") as f:
         json.dump(dataset_info, f, ensure_ascii=False, indent=2)
-        
+
     # 训练循环
-    num_epochs = os.environ.get("NUM_EPOCHS", 10)
+    num_epochs = args.num_epochs
     
     for epoch in range(start_epoch, num_epochs):
         print(f"\n====== Epoch {epoch + 1}/{num_epochs} ======")

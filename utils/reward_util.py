@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class RewardCalculator:
-    def __init__(self, method=os.getenv("REWARD_METHOD", "overlap")):
+    def __init__(self, method):
         """初始化奖励计算器
         
         Args:
