@@ -432,7 +432,7 @@ def main():
     
     # 加载训练数据
     print("正在加载数据集...")
-    training_data = load_and_process_data("dataset/train.jsonl")
+    training_data = load_and_process_data("dataset/train.jsonl", sample_ratio=0.5)  # 加载50%的样本
     print(f"有效训练样本: {len(training_data)} 条")
     
     # 训练循环
@@ -455,20 +455,37 @@ def main():
 
 
 
-def load_and_process_data(data_path: str) -> List[Dict]:
-    """加载和处理训练数据"""
+def load_and_process_data(data_path: str, sample_ratio: float = 0.5) -> List[Dict]:
+    """加载和处理训练数据
+    
+    Args:
+        data_path: 数据文件路径
+        sample_ratio: 采样比例,范围0-1,默认0.5表示加载一半样本
+    """
     with open(data_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
         raw_training_data = [json.loads(line) for line in lines]
 
-    print(f"加载了 {len(raw_training_data)} 条训练样本")
+    print(f"原始训练样本数: {len(raw_training_data)}")
+    
+    # 随机打乱数据
+    import random
+    random.shuffle(raw_training_data)
+    
+    # 根据采样比例选择样本
+    sample_size = int(len(raw_training_data) * sample_ratio)
+    raw_training_data = raw_training_data[:sample_size]
     
     training_data = []
     for item in raw_training_data:
         if 'prompt' in item and 'reference_code' in item:
             training_data.append(item)
     
+    print(f"采样后的有效训练样本: {len(training_data)} 条 (采样比例: {sample_ratio:.1%})")
+    
     return training_data
+
+
 
 def run_training_epoch(trainer: RLTrainer, 
                       training_data: List[Dict], 
