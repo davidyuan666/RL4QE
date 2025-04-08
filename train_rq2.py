@@ -382,30 +382,14 @@ def main():
             print("应用模型量化...")
             try:
                 import bitsandbytes as bnb
-                # 尝试8位量化
+                # 使用更安全的量化方式
                 if hasattr(query_enhancer, 'model'):
-                    # 使用正确的8位量化API
-                    for name, module in query_enhancer.model.named_modules():
-                        if isinstance(module, torch.nn.Linear):
-                            new_module = bnb.nn.Linear8bitLt(
-                                module.in_features,
-                                module.out_features,
-                                module.bias is not None,
-                                has_fp16_weights=False,
-                                threshold=6.0
-                            )
-                            # 复制权重和偏置
-                            if module.bias is not None:
-                                new_module.bias = module.bias
-                            new_module.weight = module.weight
-                            # 替换模块
-                            parent_name = '.'.join(name.split('.')[:-1])
-                            child_name = name.split('.')[-1]
-                            if parent_name:
-                                parent = query_enhancer.model.get_submodule(parent_name)
-                                setattr(parent, child_name, new_module)
-                            else:
-                                setattr(query_enhancer.model, child_name, new_module)
+                    # 直接使用 bnb 的 convert_module_to_8bit 函数
+                    query_enhancer.model = bnb.nn.convert_module_to_8bit(
+                        query_enhancer.model,
+                        has_fp16_weights=False,
+                        threshold=6.0
+                    )
                     print("已应用8位量化")
             except ImportError:
                 print("未找到bitsandbytes库，使用FP16量化")
