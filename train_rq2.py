@@ -432,7 +432,7 @@ def main():
     
     # 加载训练数据
     print("正在加载数据集...")
-    training_data = load_and_process_data("dataset/train.jsonl", sample_ratio=0.5)  # 加载50%的样本
+    training_data = load_and_process_data("dataset/train.jsonl", sample_ratio=0.3)  # 加载50%的样本
     print(f"有效训练样本: {len(training_data)} 条")
     
     # 训练循环
