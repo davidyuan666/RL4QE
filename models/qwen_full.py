@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import List
 import torch
 
-class QwenQueryEnhancer(nn.Module):
+class QwenFullQueryEnhancer(nn.Module):
     def __init__(self, model_name="Qwen/Qwen-7B"):
         super().__init__()
         # Load the tokenizer with proper settings
