@@ -2,9 +2,13 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch.nn as nn
 from typing import List
 import torch
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class QwenFullQueryEnhancer(nn.Module):
-    def __init__(self, model_name="Qwen/Qwen-7B"):
+    def __init__(self, model_name=os.getenv("MODEL_NAME")):
         super().__init__()
         # Load the tokenizer with proper settings
         self.tokenizer = AutoTokenizer.from_pretrained(
