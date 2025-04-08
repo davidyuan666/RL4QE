@@ -68,8 +68,8 @@ def main():
     plt.rcParams['font.size'] = 12
     
     # Find JSONL files in the result directory
-    result_dir = 'result/overlap'
-    json_files = [f for f in os.listdir(result_dir) if f.endswith('.jsonl')]
+    result_dir = 'result/bleu'
+    json_files = [f for f in os.listdir(result_dir) if f.startswith('train_') and f.endswith('.jsonl')]
     
     # Create output directory for plots
     output_dir = os.path.join(result_dir, 'plots')
