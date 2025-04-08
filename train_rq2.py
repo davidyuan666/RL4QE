@@ -15,7 +15,7 @@ from models.qwen_lora import QwenLoRAQueryEnhancer
 from models.qwen_full import QwenFullQueryEnhancer
 from llm.deepseek import DeepseekAPI
 from utils.reward_util import RewardCalculator
-
+from torch.cuda.amp import GradScaler, autocast  # Add this import
 # 加载环境变量
 load_dotenv()
 
