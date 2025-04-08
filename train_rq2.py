@@ -378,27 +378,6 @@ def main():
         print("初始化Qwen全参数模型...")
         query_enhancer = QwenFullQueryEnhancer()
         
-        if torch.cuda.is_available():
-            print("应用模型量化...")
-            try:
-                import bitsandbytes as bnb
-                # 使用更安全的量化方式
-                if hasattr(query_enhancer, 'model'):
-                    # 直接使用 bnb 的 convert_module_to_8bit 函数
-                    query_enhancer.model = bnb.nn.convert_module_to_8bit(
-                        query_enhancer.model,
-                        has_fp16_weights=False,
-                        threshold=6.0
-                    )
-                    print("已应用8位量化")
-            except ImportError:
-                print("未找到bitsandbytes库，使用FP16量化")
-                if hasattr(query_enhancer, 'model'):
-                    query_enhancer.model = query_enhancer.model.half()
-            except Exception as e:
-                print(f"8位量化失败，回退到FP16量化: {str(e)}")
-                if hasattr(query_enhancer, 'model'):
-                    query_enhancer.model = query_enhancer.model.half()
     
     # 初始化其他组件
     deepseek_api = DeepseekAPI()
