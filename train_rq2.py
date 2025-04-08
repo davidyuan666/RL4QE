@@ -405,7 +405,8 @@ def main():
     reward_calculator = RewardCalculator(method="bleu")
     
     # 增加梯度累积步数以减少内存压力
-    gradient_accumulation_steps = 16 if not is_lora else 8
+    gradient_accumulation_steps = 32 if not is_lora else 8  # 增加全参数模式的梯度累积步数
+    
     
     # 初始化训练器
     trainer = RLTrainer(
