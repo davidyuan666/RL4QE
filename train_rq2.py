@@ -384,10 +384,35 @@ def main():
                 import bitsandbytes as bnb
                 # 尝试8位量化
                 if hasattr(query_enhancer, 'model'):
-                    query_enhancer.model = bnb.nn.Convert8bitLinear.convert_module(query_enhancer.model)
+                    # 使用正确的8位量化API
+                    for name, module in query_enhancer.model.named_modules():
+                        if isinstance(module, torch.nn.Linear):
+                            new_module = bnb.nn.Linear8bitLt(
+                                module.in_features,
+                                module.out_features,
+                                module.bias is not None,
+                                has_fp16_weights=False,
+                                threshold=6.0
+                            )
+                            # 复制权重和偏置
+                            if module.bias is not None:
+                                new_module.bias = module.bias
+                            new_module.weight = module.weight
+                            # 替换模块
+                            parent_name = '.'.join(name.split('.')[:-1])
+                            child_name = name.split('.')[-1]
+                            if parent_name:
+                                parent = query_enhancer.model.get_submodule(parent_name)
+                                setattr(parent, child_name, new_module)
+                            else:
+                                setattr(query_enhancer.model, child_name, new_module)
                     print("已应用8位量化")
             except ImportError:
                 print("未找到bitsandbytes库，使用FP16量化")
+                if hasattr(query_enhancer, 'model'):
+                    query_enhancer.model = query_enhancer.model.half()
+            except Exception as e:
+                print(f"8位量化失败，回退到FP16量化: {str(e)}")
                 if hasattr(query_enhancer, 'model'):
                     query_enhancer.model = query_enhancer.model.half()
     
@@ -554,6 +579,6 @@ def print_training_summary(trainer: RLTrainer):
             print(f"GPU缓存: {last_memory['gpu_cached']:.2f}MB")
 
 
-            
+
 if __name__ == "__main__":
     main()
