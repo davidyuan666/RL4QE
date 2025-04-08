@@ -500,7 +500,7 @@ def run_training_epoch(trainer: RLTrainer,
     trainer.optimizer.zero_grad()
     
     # 对数据集进行分批处理以减少内存使用
-    batch_size = 4  # 减小批处理大小
+    batch_size = 1  # 减小批处理大小
     for idx in range(0, len(training_data), batch_size):
         batch_data = training_data[idx:idx + batch_size]
         
