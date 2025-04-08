@@ -400,7 +400,7 @@ def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="训练RL模型")
     parser.add_argument("--reward-method", type=str, default="overlap", 
-                       choices=["overlap", "rouge", "bleu", "exact_match", "f1"],
+                       choices=["overlap", "rouge", "bleu", "f1"],
                        help="奖励计算方法")
     parser.add_argument("--num-epochs", type=int, default=1,
                        help="训练的轮数")

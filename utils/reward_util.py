@@ -39,9 +39,6 @@ class RewardCalculator:
         elif self.method == "bleu":
             # BLEU 评分
             return self._bleu_score(response, ground_truth)
-        elif self.method == "exact_match":
-            # 精确匹配
-            return 1.0 if response.strip() == ground_truth.strip() else 0.0
         elif self.method == "f1":
             # F1 分数
             return self._f1_score(response, ground_truth)
