@@ -68,7 +68,7 @@ def main():
     plt.rcParams['font.size'] = 12
     
     # Find JSONL files in the result directory
-    result_dir = 'result/bleu'
+    result_dir = 'result/f1'
     json_files = [f for f in os.listdir(result_dir) if f.startswith('train_') and f.endswith('.jsonl')]
     
     # Create output directory for plots
