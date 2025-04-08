@@ -1,2 +1,2 @@
 # RL4LLM
-This is the RL framework for LLM which mainly focus on code tasks
+A Reinforcement Learning framework for Large Language Models (LLMs), focusing on code generation tasks. This repository implements various RL training methods to enhance LLMs' ability to generate high-quality code based on user queries.
