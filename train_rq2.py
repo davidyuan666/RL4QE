@@ -10,7 +10,7 @@ import gc
 import time
 from datetime import datetime
 from dotenv import load_dotenv
-
+import psutil  # Add this import
 from models.qwen_lora import QwenLoRAQueryEnhancer
 from models.qwen_full import QwenFullQueryEnhancer
 from llm.deepseek import DeepseekAPI
