@@ -37,8 +37,8 @@ class QwenLoRAQueryEnhancer(nn.Module):
             cache_dir="huggingface_cache",
             device_map="auto",
             # load_in_8bit=True,  # 使用8位量化
-            load_in_4bit=True,
-            torch_dtype=torch.float16  # 使用半精度
+            # load_in_4bit=True,
+            # torch_dtype=torch.float16  # 使用半精度
         )
 
         # Add this before creating the LoRA config
