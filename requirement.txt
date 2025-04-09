@@ -16,7 +16,6 @@ peft>=0.8.0
 rouge
 nltk
 psutil
-gptqmodel
 optimum
 scipy 
 protobuf
