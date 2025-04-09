@@ -12,7 +12,7 @@ class RewardCalculator:
         """初始化奖励计算器
         
         Args:
-            method: 奖励计算方法，可选值有 "overlap", "rouge", "bleu", "exact_match", "f1"
+            method: 奖励计算方法，可选值有 "overlap", "rouge", "bleu", "f1"
         """
         self.method = method
 

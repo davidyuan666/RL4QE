@@ -632,7 +632,7 @@ def main():
     
     # Initialize components
     deepseek_api = DeepseekAPI()
-    reward_calculator = RewardCalculator(method="bleu")
+    reward_calculator = RewardCalculator(method=os.getenv("REWARD_METHOD"))
     
     # Set gradient accumulation steps
     gradient_accumulation_steps = 32 if not is_lora else 8
