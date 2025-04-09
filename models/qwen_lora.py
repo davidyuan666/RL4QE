@@ -9,7 +9,7 @@ import os
 
 # 添加QwenLoRAQueryEnhancer实现
 class QwenLoRAQueryEnhancer(nn.Module):
-    def __init__(self, lora_r=os.getenv("LORA_R"), lora_alpha=os.getenv("LORA_ALPHA"), lora_dropout=os.getenv("LORA_DROPOUT")):
+    def __init__(self, lora_r=int(os.getenv("LORA_R")), lora_alpha=int(os.getenv("LORA_ALPHA")), lora_dropout=float(os.getenv("LORA_DROPOUT"))):
         super().__init__()
         # 加载分词器
         model_name = os.getenv("MODEL_NAME")
