@@ -9,11 +9,11 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # 添加QwenLoRAQueryEnhancer实现
 class QwenLoRAQueryEnhancer(nn.Module):
-    def __init__(self, model_name, lora_r=8, lora_alpha=32, lora_dropout=0.1):
+    def __init__(self, lora_r=8, lora_alpha=32, lora_dropout=0.1):
         super().__init__()
         # 加载分词器
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, 
+            model_name=os.getenv("MODEL_NAME"), 
             trust_remote_code=True,
             cache_dir="huggingface_cache"
         )
