@@ -12,8 +12,9 @@ class QwenLoRAQueryEnhancer(nn.Module):
     def __init__(self, lora_r=8, lora_alpha=32, lora_dropout=0.1):
         super().__init__()
         # 加载分词器
+        model_name = os.getenv("MODEL_NAME")
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name=os.getenv("MODEL_NAME"), 
+            model_name=model_name, 
             trust_remote_code=True,
             cache_dir="huggingface_cache"
         )
@@ -26,7 +27,7 @@ class QwenLoRAQueryEnhancer(nn.Module):
         # 加载基础模型 - 使用低精度和量化以节省内存
         print("正在加载Qwen基础模型...")
         self.base_model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+            model_name=model_name,
             trust_remote_code=True,
             cache_dir="huggingface_cache",
             device_map="auto",
