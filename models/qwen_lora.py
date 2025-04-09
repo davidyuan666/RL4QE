@@ -59,7 +59,6 @@ class QwenLoRAQueryEnhancer(nn.Module):
         else:
             target_modules = ["c_attn", "c_proj", "w1", "w2"]
 
-            
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=lora_r,                     # LoRA秩
