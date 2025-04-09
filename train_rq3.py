@@ -136,7 +136,15 @@ class RLTrainer:
                 generated_code = self._parse_response(response)
                 reward = self.reward_calculator.calculate(generated_code, ground_truth)
             
-            self.query_enhancer.train()
+
+            # Instead of setting entire model to train mode, only set LoRA modules to train if using LoRA
+            if self.is_lora:
+                for module in self.query_enhancer.model.modules():
+                    if hasattr(module, 'lora_A'):  # Check if it's a LoRA module
+                        module.train()
+
+
+            # self.query_enhancer.train()
             
             with autocast(enabled=self.use_amp, dtype=torch.float16):
                 model_loss, _ = self.query_enhancer.forward_with_loss([original_query])
