@@ -38,7 +38,7 @@ class QwenLoRAQueryEnhancer(nn.Module):
             device_map="auto",
             # load_in_8bit=True,  # 使用8位量化
             # load_in_4bit=True,
-            torch_dtype=torch.float16  # 使用半精度
+            # torch_dtype=torch.float16  # 使用半精度
         )
 
         # Add this before creating the LoRA config
