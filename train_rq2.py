@@ -687,7 +687,7 @@ def main():
         start_epoch += 1
     
     # Training loop
-    num_epochs = 1
+    num_epochs = int(os.getenv("NUM_EPOCHS"))
     try:
         for epoch in range(start_epoch, num_epochs):
             run_training_epoch(trainer, train_data, val_data, epoch, num_epochs)
