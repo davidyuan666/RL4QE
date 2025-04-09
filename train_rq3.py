@@ -1,906 +1,767 @@
-# train_rq3.py
+# train_rq2.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import List, Dict, Tuple, Union, Optional
+from typing import List, Dict, Tuple, Union
 import numpy as np
 import json
 import os
 import gc
 import time
-import argparse
+from datetime import datetime
 from dotenv import load_dotenv
-from peft import LoraConfig, get_peft_model, TaskType, PeftModel
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM, 
-    AutoModelForSeq2SeqLM,
-    BitsAndBytesConfig
-)
-
+import psutil
+from models.qwen_lora import QwenLoRAQueryEnhancer
+from models.qwen_full import QwenFullQueryEnhancer
 from llm.deepseek import DeepseekAPI
 from utils.reward_util import RewardCalculator
+from torch.cuda.amp import GradScaler, autocast
+from utils.code_metric import CodeMetricsCalculator
 
-# 加载环境变量
+# Load environment variables
 load_dotenv()
 
-# 获取奖励计算方法
-REWARD_METHOD = os.getenv("REWARD_METHOD", "overlap")
-
-class ModelType:
-    CAUSAL_LM = "causal_lm"  # GPT类自回归模型 (Qwen, Llama等)
-    SEQ2SEQ_LM = "seq2seq_lm"  # 编码器-解码器模型 (T5, BART等)
-
-class BaseQueryEnhancer(nn.Module):
-    """所有查询增强模型的基类"""
-    def __init__(self):
-        super().__init__()
-        
-    def forward(self, queries: List[str]) -> List[str]:
-        """处理输入查询并返回增强后的查询"""
-        raise NotImplementedError("子类必须实现forward方法")
-        
-    def forward_with_loss(self, queries: List[str]):
-        """处理输入查询并返回损失和增强后的查询"""
-        raise NotImplementedError("子类必须实现forward_with_loss方法")
-        
-    def save_lora_weights(self, path):
-        """保存LoRA权重"""
-        if hasattr(self, 'model') and hasattr(self.model, 'save_pretrained'):
-            self.model.save_pretrained(path)
-        else:
-            raise NotImplementedError("模型不支持保存LoRA权重")
-            
-    def load_lora_weights(self, path):
-        """加载LoRA权重"""
-        raise NotImplementedError("子类必须实现load_lora_weights方法")
-
-class CausalLMQueryEnhancer(BaseQueryEnhancer):
-    """自回归语言模型查询增强器 (Qwen, Llama等)"""
-    def __init__(
-        self, 
-        model_name: str,
-        use_lora: bool = True,
-        lora_r: int = 8,
-        lora_alpha: int = 32,
-        lora_dropout: float = 0.1,
-        use_4bit: bool = False,
-        use_8bit: bool = False,
-        device_map: str = "auto"
-    ):
-        super().__init__()
-        self.model_name = model_name
-        self.use_lora = use_lora
-        self.model_type = ModelType.CAUSAL_LM
-        
-        # 加载分词器
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, 
-            trust_remote_code=True,
-            cache_dir="huggingface_cache"
-        )
-        
-        # 设置pad_token (如果不存在)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        
-        # 量化配置
-        quantization_config = None
-        if use_4bit:
-            print(f"正在使用4位量化加载模型 {model_name}...")
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4"
-            )
-        elif use_8bit:
-            print(f"正在使用8位量化加载模型 {model_name}...")
-            quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True
-            )
-        
-        # 加载基础模型
-        print(f"正在加载基础模型 {model_name}...")
-        if use_lora:
-            self.base_model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                cache_dir="huggingface_cache",
-                device_map=device_map,
-                quantization_config=quantization_config,
-                torch_dtype=torch.float16  # 使用半精度
-            )
-            
-            # 确保模型配置有pad_token_id
-            self.base_model.config.pad_token_id = self.tokenizer.pad_token_id
-            
-            # 配置LoRA
-            print("正在应用LoRA适配器...")
-            # 为不同模型家族设置目标模块
-            target_modules = self._get_target_modules_for_model()
-            
-            lora_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM,
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                bias="none",
-                target_modules=target_modules
-            )
-            
-            # 将LoRA应用到模型
-            self.model = get_peft_model(self.base_model, lora_config)
-            print(f"LoRA适配器已加载! 训练参数数量: {self.model.print_trainable_parameters()}")
-        else:
-            # 全参数模型 - 使用半精度以减少内存使用
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                cache_dir="huggingface_cache",
-                device_map=device_map,
-                quantization_config=quantization_config,
-                torch_dtype=torch.float16
-            )
-            # 确保模型配置有pad_token_id
-            self.model.config.pad_token_id = self.tokenizer.pad_token_id
-    
-    def _get_target_modules_for_model(self) -> List[str]:
-        """根据模型名称获取适合的LoRA目标模块"""
-        model_name_lower = self.model_name.lower()
-        
-        # 为每个模型家族指定适当的目标模块
-        if "llama" in model_name_lower:
-            return ["q_proj", "v_proj", "k_proj", "o_proj"]
-        elif "qwen" in model_name_lower:
-            return ["c_attn", "c_proj", "w1", "w2"]
-        elif "mistral" in model_name_lower:
-            return ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        elif "bloom" in model_name_lower:
-            return ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]
-        else:
-            # 默认目标模块 - 通用设置
-            return ["query", "key", "value", "dense"]
-    
-    def forward(self, queries: List[str]) -> List[str]:
-        # 添加系统提示和任务描述
-        prompt_template = """You are a query enhancement assistant. Your task is to improve the given query to make it more specific and detailed for code generation.
-Original query: {query}
-Enhanced query:"""
-        
-        enhanced_queries = []
-        for query in queries:
-            prompt = prompt_template.format(query=query)
-            
-            # 使用no_grad以降低内存使用
-            with torch.no_grad():
-                # 处理单个查询
-                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
-                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-                
-                # 生成增强查询
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=128,
-                    temperature=0.7,
-                    top_p=0.9,
-                    do_sample=True
-                )
-                
-                enhanced_query = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                # 提取生成的部分
-                enhanced_query = enhanced_query.split("Enhanced query:")[-1].strip()
-                enhanced_queries.append(enhanced_query)
-                
-                # 释放内存
-                del outputs, inputs
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            
-        return enhanced_queries
-        
-    def forward_with_loss(self, queries: List[str]):
-        # 记录梯度计算操作
-        prompt_template = """You are a query enhancement assistant. Your task is to improve the given query to make it more specific and detailed for code generation.
-Original query: {query}
-Enhanced query:"""
-        
-        batch_loss = None
-        enhanced_queries = []
-        
-        for query in queries:
-            prompt = prompt_template.format(query=query)
-            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-            
-            # 获取模型输出和损失
-            outputs = self.model(**inputs, labels=inputs["input_ids"])
-            # 处理损失
-            if batch_loss is None:
-                batch_loss = outputs.loss
-            else:
-                batch_loss = batch_loss + outputs.loss
-            
-            # 生成增强查询
-            with torch.no_grad():
-                generated = self.model.generate(
-                    **inputs,
-                    max_new_tokens=128,
-                    temperature=0.7,
-                    top_p=0.9,
-                    do_sample=True
-                )
-                
-                enhanced_query = self.tokenizer.decode(generated[0], skip_special_tokens=True)
-                enhanced_query = enhanced_query.split("Enhanced query:")[-1].strip()
-                enhanced_queries.append(enhanced_query)
-            
-            # 释放不需要的张量
-            del generated
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        
-        # 平均批次损失
-        batch_loss = batch_loss / len(queries)
-        return batch_loss, enhanced_queries
-    
-    def load_lora_weights(self, path):
-        """加载LoRA权重"""
-        if self.use_lora:
-            self.model = PeftModel.from_pretrained(self.base_model, path)
-        else:
-            raise ValueError("非LoRA模型无法加载LoRA权重")
-
-class Seq2SeqLMQueryEnhancer(BaseQueryEnhancer):
-    """序列到序列模型查询增强器 (T5, BART等)"""
-    def __init__(
-        self, 
-        model_name: str,
-        use_lora: bool = True,
-        lora_r: int = 8,
-        lora_alpha: int = 32,
-        lora_dropout: float = 0.1,
-        use_4bit: bool = False,
-        use_8bit: bool = False,
-        device_map: str = "auto"
-    ):
-        super().__init__()
-        self.model_name = model_name
-        self.use_lora = use_lora
-        self.model_type = ModelType.SEQ2SEQ_LM
-        
-        # 加载分词器
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, 
-            cache_dir="huggingface_cache"
-        )
-        
-        # 量化配置
-        quantization_config = None
-        if use_4bit:
-            print(f"正在使用4位量化加载模型 {model_name}...")
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4"
-            )
-        elif use_8bit:
-            print(f"正在使用8位量化加载模型 {model_name}...")
-            quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True
-            )
-        
-        # 加载基础模型
-        print(f"正在加载基础模型 {model_name}...")
-        if use_lora:
-            self.base_model = AutoModelForSeq2SeqLM.from_pretrained(
-                model_name,
-                cache_dir="huggingface_cache",
-                device_map=device_map,
-                quantization_config=quantization_config,
-                torch_dtype=torch.float16
-            )
-            
-            # 配置LoRA
-            print("正在应用LoRA适配器...")
-            target_modules = self._get_target_modules_for_model()
-            
-            lora_config = LoraConfig(
-                task_type=TaskType.SEQ_2_SEQ_LM,
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                bias="none",
-                target_modules=target_modules
-            )
-            
-            # 将LoRA应用到模型
-            self.model = get_peft_model(self.base_model, lora_config)
-            print(f"LoRA适配器已加载! 训练参数数量: {self.model.print_trainable_parameters()}")
-        else:
-            # 全参数模型
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                model_name,
-                cache_dir="huggingface_cache",
-                device_map=device_map,
-                quantization_config=quantization_config,
-                torch_dtype=torch.float16
-            )
-    
-    def _get_target_modules_for_model(self) -> List[str]:
-        """根据模型名称获取适合的LoRA目标模块"""
-        model_name_lower = self.model_name.lower()
-        
-        if "t5" in model_name_lower:
-            return ["q", "v", "k", "o", "wi", "wo"]
-        elif "bart" in model_name_lower:
-            return ["q_proj", "v_proj", "k_proj", "out_proj", "fc1", "fc2"]
-        else:
-            # 默认目标模块
-            return ["query", "value", "key", "dense"]
-    
-    def forward(self, queries: List[str]) -> List[str]:
-        # 添加任务前缀
-        prefixed_queries = ["enhance: " + query for query in queries]
-        
-        enhanced_queries = []
-        for query in prefixed_queries:
-            # 使用no_grad以降低内存使用
-            with torch.no_grad():
-                # 处理单个查询
-                inputs = self.tokenizer(query, return_tensors="pt", truncation=True, max_length=512)
-                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-                
-                # 生成增强查询
-                outputs = self.model.generate(
-                    **inputs,
-                    max_length=128,
-                    num_beams=4,
-                    temperature=0.7,
-                    do_sample=True
-                )
-                
-                enhanced_query = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                enhanced_queries.append(enhanced_query)
-                
-                # 释放内存
-                del outputs, inputs
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            
-        return enhanced_queries
-        
-    def forward_with_loss(self, queries: List[str]):
-        # 添加任务前缀
-        prefixed_queries = ["enhance: " + query for query in queries]
-        
-        batch_loss = None
-        enhanced_queries = []
-        
-        for query in prefixed_queries:
-            inputs = self.tokenizer(query, return_tensors="pt", truncation=True, max_length=512)
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-            
-            # 获取模型输出和损失 
-            outputs = self.model(**inputs, labels=inputs["input_ids"])
-            
-            # 处理损失
-            if batch_loss is None:
-                batch_loss = outputs.loss
-            else:
-                batch_loss = batch_loss + outputs.loss
-            
-            # 生成增强查询
-            with torch.no_grad():
-                generated = self.model.generate(
-                    **inputs,
-                    max_length=128,
-                    num_beams=4,
-                    temperature=0.7,
-                    do_sample=True
-                )
-                
-                enhanced_query = self.tokenizer.decode(generated[0], skip_special_tokens=True)
-                enhanced_queries.append(enhanced_query)
-            
-            # 释放不需要的张量
-            del generated
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        
-        # 平均批次损失
-        batch_loss = batch_loss / len(queries)
-        return batch_loss, enhanced_queries
-    
-    def load_lora_weights(self, path):
-        """加载LoRA权重"""
-        if self.use_lora:
-            self.model = PeftModel.from_pretrained(self.base_model, path)
-        else:
-            raise ValueError("非LoRA模型无法加载LoRA权重")
+# Get training mode from environment, default to "lora"
+TRAINING_MODE = os.getenv("TRAINING_MODE", "lora").lower()
 
 class RLTrainer:
     def __init__(self, 
-                 query_enhancer: Union[CausalLMQueryEnhancer, Seq2SeqLMQueryEnhancer],
+                 query_enhancer: Union[QwenFullQueryEnhancer, QwenLoRAQueryEnhancer],
                  deepseek_api: DeepseekAPI,
                  reward_calculator: RewardCalculator,
                  learning_rate: float = 1e-4,
-                 checkpoint_dir: str = "checkpoints",
-                 gradient_accumulation_steps: int = 1):
+                 checkpoint_dir: str = "rq2/checkpoints",
+                 log_dir: str = "rq2/logs",
+                 gradient_accumulation_steps: int = 1,
+                 is_lora: bool = True,
+                 use_amp: bool = True,
+                 validation_interval: int = 100,
+                 max_grad_norm: float = 1.0):
         self.query_enhancer = query_enhancer
         self.deepseek_api = deepseek_api
         self.reward_calculator = reward_calculator
+        self.is_lora = is_lora
+        self.validation_interval = validation_interval
+        self.max_grad_norm = max_grad_norm
         
-        # 设置优化器 - 只训练需要训练的参数
-        if hasattr(self.query_enhancer, 'use_lora') and self.query_enhancer.use_lora:
+        # AMP initialization with explicit float16
+        self.use_amp = use_amp and torch.cuda.is_available() and not is_lora
+        if self.use_amp:
+            self.scaler = torch.amp.GradScaler('cuda', enabled=True)  # 更新为新的API用法
+            self.amp_dtype = torch.float16
+        else:
+            self.scaler = None
+
+        # Optimizer setup based on model type
+        if self.is_lora:
             if hasattr(self.query_enhancer, 'model') and hasattr(self.query_enhancer.model, 'parameters'):
                 trainable_params = [p for p in self.query_enhancer.model.parameters() if p.requires_grad]
-                self.optimizer = optim.Adam(trainable_params, lr=learning_rate)
-                self.is_lora = True
+                self.optimizer = optim.AdamW(trainable_params, lr=learning_rate, weight_decay=0.01)
         else:
-            self.optimizer = optim.Adam(query_enhancer.parameters(), lr=learning_rate)
-            self.is_lora = False
+            self.optimizer = optim.AdamW(query_enhancer.parameters(), lr=learning_rate, weight_decay=0.01)
             
+        # Directory setup
         self.checkpoint_dir = checkpoint_dir
-        # 确保检查点目录存在
+        self.log_dir = log_dir
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        self.best_reward = -float('inf')
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Initialize logging files
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.train_log_file = os.path.join(self.log_dir, f"train_log_{timestamp}.jsonl")
+        self.val_log_file = os.path.join(self.log_dir, f"val_log_{timestamp}.jsonl")
+        self.metrics_file = os.path.join(self.log_dir, f"metrics_{timestamp}.json")
+        
+        # Initialize metrics tracking
+        self.metrics = {
+            "train_rewards": [],
+            "val_rewards": [],
+            "test_rewards": [],
+            "best_reward": -float('inf'),
+            "best_epoch": 0,
+            "training_time": 0,
+            "start_time": time.time(),
+            "memory_usage": [],
+            "gpu_memory_usage": [],
+            "epoch_times": [],
+            "steps_completed": 0,
+            "total_samples_processed": 0,
+            "oom_events": 0,
+            "val_precision": [],
+            "val_recall": [],
+            "val_f1": [],
+            "val_css": [],
+            "test_precision": 0.0,
+            "test_recall": 0.0,
+            "test_f1": 0.0,
+            "test_css": 0.0,
+            "val_losses": [],
+            "test_losses": [],
+            "best_val_reward": -float('inf'),
+            "best_val_epoch": 0,
+            "validation_times": [],
+            "test_times": []
+        }
+        
         self.gradient_accumulation_steps = gradient_accumulation_steps
-        
-    def train_step(self, 
-               original_query: str,
-               ground_truth: str,
-               step: int) -> Tuple[float, str, str]:
-        # 设置为评估模式
-        self.query_enhancer.eval()
-        
-        with torch.no_grad():
-            # 1. 生成增强查询
-            _, enhanced_queries = self.query_enhancer.forward_with_loss([original_query])
-            enhanced_query = enhanced_queries[0]
+        self.code_metrics_calculator = CodeMetricsCalculator()
 
-            # 2. 获取DeepSeek响应
-            response = self.deepseek_api.get_response(enhanced_query)
-            generated_code = None
-            try:
-                # 尝试提取<answer>标签之间的内容
-                if "<answer>" in response and "</answer>" in response:
-                    generated_code = response.split("<answer>")[1].split("</answer>")[0].strip()
-                    # 移除代码块标记
-                    if generated_code.startswith("```"):
-                        # 找到第一个换行符以跳过语言说明行
-                        first_newline = generated_code.find("\n")
-                        if first_newline != -1:
-                            # 找到最后的```并排除
-                            last_marker = generated_code.rfind("```")
-                            if last_marker != -1:
-                                generated_code = generated_code[first_newline:last_marker].strip()
-                            else:
-                                generated_code = generated_code[first_newline:].strip()
-                else:
-                    generated_code = ""
-                    print(f"警告: 响应中未找到<answer>标签: {response}")
-            except Exception as e:
-                print(f"解析响应时出错: {e}")
-                generated_code = ""
+    def get_memory_stats(self):
+        """Get memory usage statistics"""
+        stats = {
+            "ram_used": psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024,
+            "ram_percent": psutil.virtual_memory().percent
+        }
+        
+        if torch.cuda.is_available():
+            stats.update({
+                "gpu_used": torch.cuda.memory_allocated() / 1024 / 1024,
+                "gpu_cached": torch.cuda.memory_reserved() / 1024 / 1024
+            })
+        
+        return stats
 
-            # 3. 计算奖励
-            reward = self.reward_calculator.calculate(generated_code, ground_truth)
-        
-        # 切换到训练模式，计算梯度
-        self.query_enhancer.train()
-        
-        # 4. 计算损失
-        model_loss, _ = self.query_enhancer.forward_with_loss([original_query])
-        
-        # 根据梯度累积步骤缩放损失
-        loss = -torch.mean(torch.tensor(reward, device=model_loss.device) * model_loss) / self.gradient_accumulation_steps
-        
-        # 5. 反向传播
-        loss.backward()
-        
-        # 仅在适当的步骤更新权重
-        if (step + 1) % self.gradient_accumulation_steps == 0:
-            # 应用梯度裁剪以防止梯度爆炸
-            if self.is_lora and hasattr(self.query_enhancer, 'model'):
-                torch.nn.utils.clip_grad_norm_(
-                    [p for p in self.query_enhancer.model.parameters() if p.requires_grad], 
-                    max_norm=1.0
-                )
-            else:
-                torch.nn.utils.clip_grad_norm_(self.query_enhancer.parameters(), max_norm=1.0)
-                
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+    def train_step(self, original_query: str, ground_truth: str, step: int) -> Tuple[float, str, str]:
+        """Execute a single training step"""
+        try:
+            memory_stats = self.get_memory_stats()
+            self.metrics["memory_usage"].append(memory_stats)
             
-            # 显式垃圾回收以释放内存
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        
-        return reward, enhanced_query, generated_code
-    
-    def save_checkpoint(self, epoch, avg_reward, is_best=False):
-        """保存检查点"""
-        # 根据模型类型选择保存方式
+            self.query_enhancer.eval()
+            
+            with torch.no_grad():
+                _, enhanced_queries = self.query_enhancer.forward_with_loss([original_query])
+                enhanced_query = enhanced_queries[0]
+                response = self.deepseek_api.get_response(enhanced_query)
+                generated_code = self._parse_response(response)
+                reward = self.reward_calculator.calculate(generated_code, ground_truth)
+            
+            self.query_enhancer.train()
+            
+            with autocast(enabled=self.use_amp, dtype=torch.float16):
+                model_loss, _ = self.query_enhancer.forward_with_loss([original_query])
+                loss = -torch.mean(torch.tensor(reward, device=model_loss.device) * model_loss) / self.gradient_accumulation_steps
+
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
+            
+            if (step + 1) % self.gradient_accumulation_steps == 0:
+                if self.use_amp:
+                    self.scaler.unscale_(self.optimizer)
+                
+                if self.is_lora:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in self.query_enhancer.model.parameters() if p.requires_grad],
+                        self.max_grad_norm
+                    )
+                else:
+                    torch.nn.utils.clip_grad_norm_(self.query_enhancer.parameters(), self.max_grad_norm)
+                
+                if self.use_amp:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
+                
+                self.optimizer.zero_grad()
+                self._cleanup_memory()
+
+            self.metrics["train_rewards"].append(float(reward))
+            self.metrics["steps_completed"] += 1
+            self.metrics["total_samples_processed"] += 1
+            
+            self._log_training_step(original_query, enhanced_query, ground_truth, 
+                                  generated_code, reward, step, loss)
+            
+            return reward, enhanced_query, generated_code
+            
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                self.metrics["oom_events"] += 1
+                self._cleanup_memory()
+                print(f"OOM Error (#{self.metrics['oom_events']})")
+                raise e
+            elif "_amp_foreach_non_finite_check_and_unscale_cuda" in str(e):
+                print("AMP scaling error encountered, disabling AMP and retrying...")
+                self.use_amp = False
+                self.scaler = None
+                return self.train_step(original_query, ground_truth, step)
+            raise e
+
+    def validate(self, validation_data: List[Dict]) -> float:
+        """Evaluate model performance on validation set"""
+        self.query_enhancer.eval()
+        total_reward = 0
+        total_metrics = {"precision": 0.0, "recall": 0.0, "f1": 0.0, "css": 0.0}
+        total_samples = len(validation_data)
+        validation_start_time = time.time()
+
+        with torch.no_grad():
+            for idx, data in enumerate(validation_data):
+                try:
+                    _, enhanced_queries = self.query_enhancer.forward_with_loss([data["prompt"]])
+                    enhanced_query = enhanced_queries[0]
+                    response = self.deepseek_api.get_response(enhanced_query)
+                    generated_code = self._parse_response(response)
+                    reward = self.reward_calculator.calculate(generated_code, data["reference_code"])
+                    total_reward += reward
+
+                    # Calculate code metrics
+                    metrics = self.code_metrics_calculator.calculate_metrics(generated_code, data["reference_code"])
+                    for key, value in metrics.items():
+                        total_metrics[key] += value
+
+                    print(f"Validation sample {idx+1}/{total_samples}, Reward: {reward:.4f}")
+
+                except Exception as e:
+                    print(f"Validation sample {idx+1} failed: {str(e)}")
+                    continue
+
+        avg_reward = total_reward / total_samples
+        avg_metrics = {k: v / total_samples for k, v in total_metrics.items()}
+        validation_time = time.time() - validation_start_time
+
+        # Update metrics
+        self.metrics["val_rewards"].append(avg_reward)
+        self.metrics["validation_times"].append(validation_time)
+        self.metrics["val_precision"].append(avg_metrics["precision"])
+        self.metrics["val_recall"].append(avg_metrics["recall"])
+        self.metrics["val_f1"].append(avg_metrics["f1"])
+        self.metrics["val_css"].append(avg_metrics["css"])
+
+        print(f"\nValidation completed:")
+        print(f"Average reward: {avg_reward:.4f}")
+        print(f"Metrics: {avg_metrics}")
+        print(f"Time taken: {validation_time:.2f}s")
+
+        return avg_reward
+
+    def test(self, test_data: List[Dict]) -> float:
+        """Evaluate model performance on test set"""
+        self.query_enhancer.eval()
+        total_reward = 0
+        total_metrics = {"precision": 0.0, "recall": 0.0, "f1": 0.0, "css": 0.0}
+        total_samples = len(test_data)
+        test_start_time = time.time()
+
+        with torch.no_grad():
+            for idx, data in enumerate(test_data):
+                try:
+                    _, enhanced_queries = self.query_enhancer.forward_with_loss([data["prompt"]])
+                    enhanced_query = enhanced_queries[0]
+                    response = self.deepseek_api.get_response(enhanced_query)
+                    generated_code = self._parse_response(response)
+                    reward = self.reward_calculator.calculate(generated_code, data["reference_code"])
+                    total_reward += reward
+
+                    # Calculate code metrics
+                    metrics = self.code_metrics_calculator.calculate_metrics(generated_code, data["reference_code"])
+                    for key, value in metrics.items():
+                        total_metrics[key] += value
+
+                    print(f"Test sample {idx+1}/{total_samples}, Reward: {reward:.4f}")
+
+                except Exception as e:
+                    print(f"Test sample {idx+1} failed: {str(e)}")
+                    continue
+
+        avg_reward = total_reward / total_samples
+        avg_metrics = {k: v / total_samples for k, v in total_metrics.items()}
+        test_time = time.time() - test_start_time
+
+        # Update metrics
+        self.metrics["test_rewards"] = avg_reward
+        self.metrics["test_times"].append(test_time)
+        self.metrics["test_precision"] = avg_metrics["precision"]
+        self.metrics["test_recall"] = avg_metrics["recall"]
+        self.metrics["test_f1"] = avg_metrics["f1"]
+        self.metrics["test_css"] = avg_metrics["css"]
+
+        print(f"\nTest evaluation completed:")
+        print(f"Average reward: {avg_reward:.4f}")
+        print(f"Metrics: {avg_metrics}")
+        print(f"Time taken: {test_time:.2f}s")
+
+        return avg_reward
+
+    def save_checkpoint(self, epoch: int, avg_reward: float, is_best: bool = False, checkpoint_path: str = None):
+        """Save model checkpoint"""
         if self.is_lora:
-            # 创建检查点目录
-            checkpoint_dir = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{epoch}")
+            if checkpoint_path is None:
+                checkpoint_dir = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{epoch}")
+            else:
+                checkpoint_dir = checkpoint_path
             os.makedirs(checkpoint_dir, exist_ok=True)
             
-            # 保存LoRA权重
             self.query_enhancer.save_lora_weights(checkpoint_dir)
             
-            # 保存额外信息
             meta_info = {
                 'epoch': epoch,
                 'reward': avg_reward,
-                'model_name': self.query_enhancer.model_name,
-                'model_type': self.query_enhancer.model_type,
-                'optimizer_state': self.optimizer.state_dict()
+                'model_type': 'QwenLoRAQueryEnhancer',
+                'optimizer_state': self.optimizer.state_dict(),
+                'metrics': self.metrics,
+                'amp_state': self.scaler.state_dict() if self.use_amp else None
             }
             torch.save(meta_info, os.path.join(checkpoint_dir, "meta_info.pt"))
             
-            print(f"已保存LoRA检查点到: {checkpoint_dir}")
-            
-            # 保存最佳模型
             if is_best:
                 best_model_dir = os.path.join(self.checkpoint_dir, 'best_model')
                 os.makedirs(best_model_dir, exist_ok=True)
-                
                 self.query_enhancer.save_lora_weights(best_model_dir)
-                # 复制meta信息
                 torch.save(meta_info, os.path.join(best_model_dir, "meta_info.pt"))
-                print(f"已保存最佳LoRA模型! Reward: {avg_reward:.4f}")
         else:
-            # 全参数模型保存
             checkpoint = {
                 'epoch': epoch,
                 'model_state_dict': self.query_enhancer.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'reward': avg_reward,
-                'model_name': self.query_enhancer.model_name,
-                'model_type': self.query_enhancer.model_type
+                'model_type': 'QwenFullQueryEnhancer',
+                'metrics': self.metrics,
+                'amp_state': self.scaler.state_dict() if self.use_amp else None
             }
             
-            checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
+            if checkpoint_path is None:
+                checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
             torch.save(checkpoint, checkpoint_path)
-            print(f"已保存全参数检查点到: {checkpoint_path}")
             
-            # 保存最佳模型
             if is_best:
                 best_model_path = os.path.join(self.checkpoint_dir, 'best_model.pt')
                 torch.save(checkpoint, best_model_path)
-                print(f"已保存最佳全参数模型! Reward: {avg_reward:.4f}")
-    
-    def load_checkpoint(self, checkpoint_path):
-        """加载检查点"""
+
+    def load_checkpoint(self, checkpoint_path: str) -> Tuple[int, float]:
+        """Load model checkpoint"""
         if not os.path.exists(checkpoint_path):
-            print(f"检查点不存在: {checkpoint_path}")
-            return 0, -float('inf')  # 返回初始epoch和reward
+            print(f"Checkpoint not found: {checkpoint_path}")
+            return 0, -float('inf')
             
-        # 根据模型类型选择加载方式
         if self.is_lora and os.path.isdir(checkpoint_path):
-            # 加载LoRA权重
             self.query_enhancer.load_lora_weights(checkpoint_path)
             
-            # 加载meta信息
             meta_path = os.path.join(checkpoint_path, "meta_info.pt")
             if os.path.exists(meta_path):
                 meta_info = torch.load(meta_path, map_location='cpu')
                 self.optimizer.load_state_dict(meta_info['optimizer_state'])
+                if meta_info.get('amp_state') and self.use_amp:
+                    self.scaler.load_state_dict(meta_info['amp_state'])
                 epoch = meta_info['epoch']
                 reward = meta_info['reward']
-                self.best_reward = reward
-                print(f"已加载LoRA检查点: {checkpoint_path}, Epoch: {epoch}, Reward: {reward:.4f}")
+                if 'metrics' in meta_info:
+                    self.metrics.update(meta_info['metrics'])
                 return epoch, reward
             else:
-                print(f"无法找到meta信息: {meta_path}")
                 return 0, -float('inf')
         else:
-            # 加载全参数模型
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
             self.query_enhancer.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            epoch = checkpoint['epoch']
-            reward = checkpoint['reward']
-            self.best_reward = reward
-            print(f"已加载全参数检查点: {checkpoint_path}, Epoch: {epoch}, Reward: {reward:.4f}")
-            return epoch, reward
+            if checkpoint.get('amp_state') and self.use_amp:
+                self.scaler.load_state_dict(checkpoint['amp_state'])
+            if 'metrics' in checkpoint:
+                self.metrics.update(checkpoint['metrics'])
+            return checkpoint['epoch'], checkpoint['reward']
 
-def get_model(
-    model_name: str, 
-    model_type: str = None,
-    use_lora: bool = True,
-    use_4bit: bool = False,
-    use_8bit: bool = True
-) -> Union[CausalLMQueryEnhancer, Seq2SeqLMQueryEnhancer]:
-    """根据模型名称和类型创建合适的模型"""
-    
-    # 如果没有指定模型类型，尝试根据模型名称推断
-    if model_type is None:
-        model_type = infer_model_type(model_name)
+    def _parse_response(self, response: str) -> str:
+        """Parse API response"""
+        try:
+            if "<answer>" in response and "</answer>" in response:
+                code = response.split("<answer>")[1].split("</answer>")[0].strip()
+                if code.startswith("```"):
+                    first_newline = code.find("\n")
+                    if first_newline != -1:
+                        last_marker = code.rfind("```")
+                        if last_marker != -1:
+                            code = code[first_newline:last_marker].strip()
+                        else:
+                            code = code[first_newline:].strip()
+                return code
+            print(f"Warning: Could not find <answer> tags in response: {response}")
+            return ""
+        except Exception as e:
+            print(f"Error parsing response: {e}")
+            return ""
+
+    def _cleanup_memory(self):
+        """Clean up memory"""
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def _log_training_step(self, original_query: str, enhanced_query: str, 
+                          ground_truth: str, generated_code: str, 
+                          reward: float, step: int, loss: torch.Tensor):
+        """Log training step data"""
+        log_entry = {
+            "original_query": original_query,
+            "enhanced_query": enhanced_query,
+            "ground_truth": ground_truth,
+            "generated_code": generated_code,
+            "reward": float(reward),
+            "step": step,
+            "loss": float(loss.item()),
+            "memory_stats": self.get_memory_stats(),
+            "timestamp": datetime.now().isoformat()
+        }
         
-    if model_type == ModelType.CAUSAL_LM:
-        return CausalLMQueryEnhancer(
-            model_name=model_name,
-            use_lora=use_lora,
-            use_4bit=use_4bit,
-            use_8bit=use_8bit
-        )
-    elif model_type == ModelType.SEQ2SEQ_LM:
-        return Seq2SeqLMQueryEnhancer(
-            model_name=model_name,
-            use_lora=use_lora,
-            use_4bit=use_4bit,
-            use_8bit=use_8bit
-        )
-    else:
-        raise ValueError(f"不支持的模型类型: {model_type}")
+        with open(self.train_log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
-def infer_model_type(model_name: str) -> str:
-    """根据模型名称推断模型类型"""
-    model_name_lower = model_name.lower()
+    def save_metrics(self):
+        """Save training metrics"""
+        self.metrics["training_time"] = time.time() - self.metrics["start_time"]
+        
+        if self.metrics["train_rewards"]:
+            self.metrics.update({
+                "avg_train_reward": sum(self.metrics["train_rewards"]) / len(self.metrics["train_rewards"]),
+                "max_train_reward": max(self.metrics["train_rewards"]),
+                "min_train_reward": min(self.metrics["train_rewards"]),
+                "final_memory_stats": self.get_memory_stats()
+            })
+        
+        with open(self.metrics_file, "w", encoding="utf-8") as f:
+            json.dump(self.metrics, f, ensure_ascii=False, indent=2)
+
+
+def load_and_process_data(file_path: str, sample_ratio: float = 1.0) -> List[Dict]:
+    """
+    从JSONL文件加载数据并进行采样
     
-    seq2seq_models = ["t5", "bart", "pegasus", "mt5", "mbart"]
-    causal_models = ["llama", "qwen", "gpt", "mistral", "bloom", "chat", "falcon"]
+    Args:
+        file_path (str): JSONL文件路径
+        sample_ratio (float): 采样比例，范围(0,1]
+        
+    Returns:
+        List[Dict]: 处理后的数据列表
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"数据文件不存在: {file_path}")
     
-    for model in seq2seq_models:
-        if model in model_name_lower:
-            return ModelType.SEQ2SEQ_LM
+    if not 0 < sample_ratio <= 1:
+        raise ValueError("采样比例必须在(0,1]范围内")
+    
+    # 读取数据
+    data = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                item = json.loads(line)
+                # 确保数据包含必要的字段
+                if "prompt" in item and "reference_code" in item:
+                    data.append(item)
+                else:
+                    print(f"警告: 跳过不完整的数据项: {line[:50]}...")
+            except json.JSONDecodeError:
+                print(f"警告: 跳过无效的JSON行: {line[:50]}...")
+    
+    total_samples = len(data)
+    if total_samples == 0:
+        raise ValueError(f"没有找到有效的训练数据在: {file_path}")
+        
+    print(f"原始数据集大小: {total_samples}")
+    
+    # 随机采样
+    if sample_ratio < 1.0:
+        import random
+        sample_size = int(total_samples * sample_ratio)
+        random.seed(42)  # 设置随机种子以确保可重复性
+        data = random.sample(data, sample_size)
+        print(f"采样后数据集大小: {len(data)} (采样比例: {sample_ratio:.2%})")
+    
+    return data
+
+def split_data(data: List[Dict], train_ratio: float = 0.8, val_ratio: float = 0.1) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """
+    将数据集划分为训练集、验证集和测试集
+    
+    Args:
+        data (List[Dict]): 完整数据集
+        train_ratio (float): 训练集比例，默认0.8
+        val_ratio (float): 验证集比例，默认0.1
+        (测试集比例 = 1 - train_ratio - val_ratio)
+        
+    Returns:
+        Tuple[List[Dict], List[Dict], List[Dict]]: (训练集, 验证集, 测试集)
+    """
+    if not 0 < train_ratio < 1:
+        raise ValueError("训练集比例必须在(0,1)范围内")
+    if not 0 < val_ratio < 1:
+        raise ValueError("验证集比例必须在(0,1)范围内")
+    if train_ratio + val_ratio >= 1:
+        raise ValueError("训练集和验证集比例之和必须小于1")
+    
+    total_samples = len(data)
+    if total_samples == 0:
+        raise ValueError("数据集为空")
+    
+    # 设置随机种子以确保可重复性
+    import random
+    random.seed(42)
+    
+    # 随机打乱数据
+    shuffled_data = data.copy()
+    random.shuffle(shuffled_data)
+    
+    # 计算各集合的大小
+    train_size = int(total_samples * train_ratio)
+    val_size = int(total_samples * val_ratio)
+    
+    # 划分数据集
+    train_data = shuffled_data[:train_size]
+    val_data = shuffled_data[train_size:train_size + val_size]
+    test_data = shuffled_data[train_size + val_size:]
+    
+    print(f"\n数据集划分完成:")
+    print(f"训练集: {len(train_data)} 样本 ({len(train_data)/total_samples:.1%})")
+    print(f"验证集: {len(val_data)} 样本 ({len(val_data)/total_samples:.1%})")
+    print(f"测试集: {len(test_data)} 样本 ({len(test_data)/total_samples:.1%})")
+    
+    return train_data, val_data, test_data
+
+def run_training_epoch(trainer: RLTrainer, 
+                      train_data: List[Dict], 
+                      val_data: List[Dict], 
+                      epoch: int, 
+                      num_epochs: int) -> None:
+    """
+    运行一个训练轮次
+    
+    Args:
+        trainer: RLTrainer实例
+        train_data: 训练数据
+        val_data: 验证数据
+        epoch: 当前轮次
+        num_epochs: 总轮次数
+    """
+    print(f"\n====== Epoch {epoch + 1}/{num_epochs} ======")
+    epoch_start_time = time.time()
+    total_reward = 0
+    
+    # 确保优化器梯度清零开始新的epoch
+    trainer.optimizer.zero_grad()
+    
+    # 训练阶段
+    for idx, data in enumerate(train_data):
+        try:
+            reward, enhanced_query, generated_code = trainer.train_step(
+                data["prompt"],
+                data["reference_code"],
+                idx
+            )
+            print(f"训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)}, Reward: {reward:.4f}")
             
-    for model in causal_models:
-        if model in model_name_lower:
-            return ModelType.CAUSAL_LM
+            total_reward += reward
+            
+            # 每处理一定数量样本后手动执行垃圾回收
+            if (idx + 1) % 5 == 0:
+                trainer._cleanup_memory()
+            
+            # 定期进行验证
+            if (idx + 1) % trainer.validation_interval == 0:
+                print("\n执行验证...")
+                val_reward = trainer.validate(val_data)
+                print(f"验证奖励: {val_reward:.4f}")
+                
+                # 如果是最佳验证奖励，保存最佳模型
+                if val_reward > trainer.metrics["best_val_reward"]:
+                    trainer.metrics["best_val_reward"] = val_reward
+                    trainer.metrics["best_val_epoch"] = epoch
+                    trainer.save_checkpoint(epoch, val_reward, is_best=True)
+                    print(f"发现新的最佳模型! 奖励: {val_reward:.4f}")
+                
+                # 恢复训练模式
+                trainer.query_enhancer.train()
+                
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"警告: CUDA内存不足。释放缓存并跳过当前样本。")
+                trainer._cleanup_memory()
+                continue
+            else:
+                raise e
     
-    # 默认为因果语言模型
-    print(f"警告: 无法确定模型类型 '{model_name}'，默认使用因果语言模型类型")
-    return ModelType.CAUSAL_LM
+    # 计算平均奖励
+    avg_train_reward = total_reward / len(train_data)
+    print(f"\n[*] Epoch {epoch + 1} 完成")
+    print(f"平均训练奖励: {avg_train_reward:.4f}")
+    
+    # 更新指标
+    trainer.metrics["train_rewards"].append(avg_train_reward)
+    trainer.metrics["epoch_times"].append(time.time() - epoch_start_time)
+    
+    # 保存当前epoch的检查点
+    trainer.save_checkpoint(epoch, avg_train_reward)
+    
+    # 保存为最新检查点
+    latest_checkpoint_path = os.path.join(trainer.checkpoint_dir, 
+                                        "latest_checkpoint" if trainer.is_lora else "latest_checkpoint.pt")
+    if trainer.is_lora:
+        os.makedirs(latest_checkpoint_path, exist_ok=True)
+        trainer.query_enhancer.save_lora_weights(latest_checkpoint_path)
+    else:
+        trainer.save_checkpoint(epoch, avg_train_reward, checkpoint_path=latest_checkpoint_path)
 
-def optimize_memory():
-    """优化内存使用以在有限显存下运行"""
-    # 设置PyTorch内存管理
-    if torch.cuda.is_available():
-        # 设置内存分配器以减少内存碎片
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-        
-        # 设置CUDA分配器以减少内存碎片
-        torch.cuda.set_per_process_memory_fraction(0.9)  # 保留10%显存给系统
-        torch.cuda.empty_cache()
-        
-        # 启用CUDNN确定性模式以减少内存波动
-        torch.backends.cudnn.deterministic = True
-        
-    # 设置较低的预缓存区
-    os.environ['TRANSFORMERS_CACHE'] = 'huggingface_cache'
-    os.environ['HF_HOME'] = 'huggingface_cache'
+def print_training_summary(trainer: RLTrainer):
+    """Print a summary of the training metrics and results.
     
-    # 启用梯度检查点以减少内存使用
-    os.environ['PYTORCH_CHECKPOINT_WARNING'] = '1'
+    Args:
+        trainer: The RLTrainer instance containing training metrics
+    """
+    print("\n====== Training Summary ======")
+    
+    # Training statistics
+    print("\nTraining Statistics:")
+    if trainer.metrics["train_rewards"]:
+        print(f"Average Training Reward: {sum(trainer.metrics['train_rewards']) / len(trainer.metrics['train_rewards']):.4f}")
+        print(f"Best Training Reward: {max(trainer.metrics['train_rewards']):.4f}")
+        print(f"Total Steps Completed: {trainer.metrics['steps_completed']}")
+        print(f"Total Samples Processed: {trainer.metrics['total_samples_processed']}")
+    
+    # Validation statistics
+    print("\nValidation Statistics:")
+    if trainer.metrics["val_rewards"]:
+        print(f"Best Validation Reward: {trainer.metrics['best_val_reward']:.4f}")
+        print(f"Best Validation Epoch: {trainer.metrics['best_val_epoch']}")
+        if trainer.metrics["val_precision"]:
+            latest_val_idx = -1
+            print(f"Final Validation Metrics:")
+            print(f"- Precision: {trainer.metrics['val_precision'][latest_val_idx]:.4f}")
+            print(f"- Recall: {trainer.metrics['val_recall'][latest_val_idx]:.4f}")
+            print(f"- F1 Score: {trainer.metrics['val_f1'][latest_val_idx]:.4f}")
+            print(f"- CSS Score: {trainer.metrics['val_css'][latest_val_idx]:.4f}")
+    
+    # Test statistics
+    print("\nTest Statistics:")
+    print(f"Final Test Reward: {trainer.metrics['test_rewards']:.4f}")
+    print(f"Test Metrics:")
+    print(f"- Precision: {trainer.metrics['test_precision']:.4f}")
+    print(f"- Recall: {trainer.metrics['test_recall']:.4f}")
+    print(f"- F1 Score: {trainer.metrics['test_f1']:.4f}")
+    print(f"- CSS Score: {trainer.metrics['test_css']:.4f}")
+    
+    # Training time and resource statistics
+    print("\nResource Usage:")
+    training_time_hours = trainer.metrics["training_time"] / 3600
+    print(f"Total Training Time: {training_time_hours:.2f} hours")
+    if trainer.metrics["oom_events"] > 0:
+        print(f"Out of Memory Events: {trainer.metrics['oom_events']}")
+    
+    if trainer.metrics.get("final_memory_stats"):
+        mem_stats = trainer.metrics["final_memory_stats"]
+        print("\nFinal Memory Usage:")
+        print(f"RAM Used: {mem_stats['ram_used']:.2f} MB ({mem_stats['ram_percent']}%)")
+        if 'gpu_used' in mem_stats:
+            print(f"GPU Memory Used: {mem_stats['gpu_used']:.2f} MB")
+            print(f"GPU Memory Cached: {mem_stats['gpu_cached']:.2f} MB")
+    
+    print("\n====== End of Training Summary ======")
 
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description="训练RQ3的各种基础模型")
     
-    # 模型相关参数
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen-7B", 
-                       help="要训练的模型名称，例如: 'Qwen/Qwen-7B', 'meta-llama/Llama-2-7b-hf', 't5-small'等")
-    parser.add_argument("--model_type", type=str, choices=[ModelType.CAUSAL_LM, ModelType.SEQ2SEQ_LM], default=None,
-                       help="模型类型: 'causal_lm'或'seq2seq_lm'")
-    
-    # 训练配置
-    parser.add_argument("--use_lora", action="store_true", default=True,
-                      help="使用LoRA进行高效微调")
-    parser.add_argument("--use_4bit", action="store_true", default=False,
-                      help="使用4位量化以减少内存使用")
-    parser.add_argument("--use_8bit", action="store_true", default=True,
-                      help="使用8位量化以减少内存使用")
-    parser.add_argument("--learning_rate", type=float, default=1e-4,
-                      help="学习率")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8,
-                      help="梯度累积步数")
-    parser.add_argument("--num_epochs", type=int, default=5,
-                      help="训练轮数")
-    
-    # 数据和检查点
-    parser.add_argument("--data_path", type=str, default="dataset/train.jsonl",
-                      help="训练数据路径")
-    parser.add_argument("--checkpoint_dir", type=str, default=None,
-                      help="检查点保存目录，默认为'checkpoints_model名称'")
-    parser.add_argument("--resume", action="store_true", default=False,
-                      help="从最新检查点恢复训练")
-    
-    args = parser.parse_args()
-    
-    # 处理一些默认值
-    if args.checkpoint_dir is None:
-        model_name_short = args.model_name.split("/")[-1]
-        args.checkpoint_dir = f"checkpoints_{model_name_short}"
-    
-    return args
-
 def main():
-    """主函数"""
-    # 解析命令行参数
-    args = parse_args()
+    # PyTorch memory management setup
+    if torch.cuda.is_available():
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True'
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision('high')
     
-    # 优化内存使用
-    optimize_memory()
+    # Get training mode
+    training_mode = TRAINING_MODE
+    print(f"Current training mode: {training_mode}")
     
-    print(f"=== RQ3实验: 多种基础模型的转移性评估 ===")
-    print(f"当前模型: {args.model_name}")
-    print(f"使用LoRA: {args.use_lora}")
-    print(f"量化设置: 4bit={args.use_4bit}, 8bit={args.use_8bit}")
+    # Create directories
+    checkpoint_dir = f"rq2/checkpoints_{training_mode}"
+    log_dir = f"rq2/logs_{training_mode}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
     
-    # 创建检查点目录
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    # Initialize model
+    is_lora = training_mode == "lora"
+    if is_lora:
+        print("Initializing Qwen LoRA model...")
+        query_enhancer = QwenLoRAQueryEnhancer()
+    else:
+        print("Initializing Qwen full parameter model...")
+        query_enhancer = QwenFullQueryEnhancer()
     
-    # 加载模型
-    model_start_time = time.time()
-    query_enhancer = get_model(
-        model_name=args.model_name,
-        model_type=args.model_type,
-        use_lora=args.use_lora,
-        use_4bit=args.use_4bit,
-        use_8bit=args.use_8bit
-    )
-    model_load_time = time.time() - model_start_time
-    print(f"模型加载完成，耗时: {model_load_time:.2f}秒")
-    
-    # 初始化其他组件
+    # Initialize components
     deepseek_api = DeepseekAPI()
-    reward_calculator = RewardCalculator(method=REWARD_METHOD)
+    reward_calculator = RewardCalculator(method=os.getenv("REWARD_METHOD"))
     
-    # 初始化训练器
+    # Set gradient accumulation steps
+    gradient_accumulation_steps = 32 if not is_lora else 8
+    
+    # Convert SAMPLE_RATIO to float with default value of 1.0
+    sample_ratio = float(os.getenv("SAMPLE_RATIO", "1.0"))
+    # 加载并处理数据集
+    print("加载数据集...")
+    full_data = load_and_process_data("dataset/train.jsonl", sample_ratio=sample_ratio)
+    train_data, val_data, test_data = split_data(full_data, train_ratio=0.8, val_ratio=0.1)
+    
+    # 记录数据集信息
+    dataset_info = {
+        "total_samples": len(full_data),
+        "train_size": len(train_data),
+        "val_size": len(val_data),
+        "test_size": len(test_data),
+        "sample_ratio": sample_ratio,
+        "train_ratio": 0.8,
+        "val_ratio": 0.1,
+        "test_ratio": 0.1,
+        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+    }
+    
+    # 保存数据集信息
+    dataset_info_path = os.path.join(log_dir, "dataset_info.json")
+    with open(dataset_info_path, "w", encoding="utf-8") as f:
+        json.dump(dataset_info, f, ensure_ascii=False, indent=2)
+    print(f"数据集信息已保存到: {dataset_info_path}")
+    
+    # Initialize trainer
     trainer = RLTrainer(
         query_enhancer=query_enhancer,
         deepseek_api=deepseek_api,
         reward_calculator=reward_calculator,
-        learning_rate=args.learning_rate,
-        checkpoint_dir=args.checkpoint_dir,
-        gradient_accumulation_steps=args.gradient_accumulation_steps
+        checkpoint_dir=checkpoint_dir,
+        log_dir=log_dir,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        is_lora=is_lora,
+        use_amp=not is_lora,
+        validation_interval=50,
+        max_grad_norm=1.0
     )
     
-    # 加载检查点（如果需要恢复）
+    # Load checkpoint if exists
     start_epoch = 0
-    if args.resume:
-        if args.use_lora:
-            resume_checkpoint = os.path.join(args.checkpoint_dir, "latest_checkpoint")
-        else:
-            resume_checkpoint = os.path.join(args.checkpoint_dir, "latest_checkpoint.pt")
-        
-        if os.path.exists(resume_checkpoint):
-            start_epoch, _ = trainer.load_checkpoint(resume_checkpoint)
-            start_epoch += 1  # 从下一个epoch开始
-            print(f"已从epoch {start_epoch}恢复训练")
+    resume_checkpoint = os.path.join(checkpoint_dir, 
+                                   "latest_checkpoint" if is_lora else "latest_checkpoint.pt")
     
-    # 加载训练数据
-    print("正在加载数据集...")
-    training_data = []
-    with open(args.data_path, "r") as f:
-        lines = f.readlines()
-        for line in lines:
-            try:
-                item = json.loads(line)
-                if 'query' in item and 'ground_truth' in item:
-                    training_data.append(item)
-            except json.JSONDecodeError:
-                print(f"警告: 无法解析JSON行: {line}")
-                continue
-
-    print(f"加载了 {len(training_data)} 条有效训练样本")
+    if os.path.exists(resume_checkpoint):
+        start_epoch, _ = trainer.load_checkpoint(resume_checkpoint)
+        start_epoch += 1
     
-    # 截取少量样本以便快速评估不同模型的性能
-    # 可通过环境变量控制训练样本数量
-    max_samples = int(os.getenv("MAX_SAMPLES", "0"))
-    if max_samples > 0 and max_samples < len(training_data):
-        print(f"截取前 {max_samples} 条样本用于快速评估")
-        training_data = training_data[:max_samples]
+    # Training loop
+    num_epochs = int(os.getenv("NUM_EPOCHS"))
+    try:
+        for epoch in range(start_epoch, num_epochs):
+            run_training_epoch(trainer, train_data, val_data, epoch, num_epochs)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user")
+    except Exception as e:
+        print(f"\nTraining error: {str(e)}")
+        raise e
+    finally:
+        trainer.save_metrics()
     
-    # 训练循环
-    print(f"\n开始训练...")
-    for epoch in range(start_epoch, args.num_epochs):
-        print(f"\n--- Epoch {epoch + 1}/{args.num_epochs} ---")
-        
-        epoch_start_time = time.time()
-        total_reward = 0
-        
-        # 确保优化器梯度清零开始新的epoch
-        trainer.optimizer.zero_grad()
-        
-        for idx, data in enumerate(training_data):
-            try:
-                step_start_time = time.time()
-                reward, enhanced_query, generated_code = trainer.train_step(
-                    data["query"],
-                    data["ground_truth"],
-                    idx
-                )
-                step_time = time.time() - step_start_time
-                
-                print(f"样本 {idx+1}/{len(training_data)}, 奖励: {reward:.4f}, 步骤时间: {step_time:.2f}秒")
-                print(f"原始查询: {data['query']}")
-                print(f"增强查询: {enhanced_query}")
-                if len(generated_code) > 100:
-                    print(f"生成代码: {generated_code[:100]}...")
-                else:
-                    print(f"生成代码: {generated_code}")
-                print("-" * 50)
-                
-                total_reward += reward
-                
-                # 每处理一定数量样本后手动执行垃圾回收
-                if (idx + 1) % 5 == 0:
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                
-            except RuntimeError as e:
-                if "out of memory" in str(e):
-                    print(f"警告: CUDA内存不足。释放缓存并跳过当前样本: {str(e)}")
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    continue
-                else:
-                    print(f"训练过程中发生错误: {str(e)}")
-                    raise e
-            except Exception as e:
-                print(f"处理样本时出错: {str(e)}")
-                continue
-            
-        avg_reward = total_reward / len(training_data)
-        epoch_time = time.time() - epoch_start_time
-        print(f"Epoch {epoch + 1}, 平均奖励: {avg_reward:.4f}, 耗时: {epoch_time:.2f}秒")
-        
-        # 保存检查点
-        trainer.save_checkpoint(epoch + 1, avg_reward)
-        
-        # 保存最新检查点的副本作为恢复点
-        if args.use_lora:
-            latest_checkpoint = os.path.join(args.checkpoint_dir, f"checkpoint_epoch_{epoch + 1}")
-            if os.path.exists(latest_checkpoint):
-                os.system(f"cp -r {latest_checkpoint} {os.path.join(args.checkpoint_dir, 'latest_checkpoint')}")
-        else:
-            latest_checkpoint = os.path.join(args.checkpoint_dir, f'checkpoint_epoch_{epoch + 1}.pt')
-            if os.path.exists(latest_checkpoint):
-                checkpoint_data = torch.load(latest_checkpoint, map_location='cpu')
-                torch.save(checkpoint_data, os.path.join(args.checkpoint_dir, "latest_checkpoint.pt"))
-        
-        # 保存最佳模型
-        if avg_reward > trainer.best_reward:
-            trainer.best_reward = avg_reward
-            trainer.save_checkpoint(epoch + 1, avg_reward, is_best=True)
-            print(f"新的最佳模型! 奖励: {avg_reward:.4f}")
-        
-        # 每个epoch结束后执行全面内存清理
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
-    # 打印最终结果
-    print(f"\n训练完成! 模型: {args.model_name}")
-    print(f"最佳奖励: {trainer.best_reward:.4f}")
-    print(f"检查点保存在: {args.checkpoint_dir}")
+    # Final evaluation
+    print("\n=== Final Evaluation ===")
+    print("Evaluating on test set...")
+    test_reward = trainer.test(test_data)
+    trainer.save_metrics()
+    
+    print_training_summary(trainer)
 
-
-'''
-# 使用Llama-2-7B模型与LoRA
-python train_rq3.py --model_name "meta-llama/Llama-2-7b-hf" --use_lora --use_8bit
-
-# 使用T5模型
-python train_rq3.py --model_name "t5-base" --model_type seq2seq_lm --use_lora
-
-# 恢复训练
-python train_rq3.py --model_name "Qwen/Qwen-7B" --resume
-
-# 使用4位量化以进一步减少内存使用
-python train_rq3.py --model_name "meta-llama/Llama-2-7b-hf" --use_4bit --gradient_accumulation_steps 16
-
-# 限制训练样本数量以快速评估多个模型
-MAX_SAMPLES=100 python train_rq3.py --model_name "mistralai/Mistral-7B-v0.1" --num_epochs 2
-
-'''
 if __name__ == "__main__":
     main()
