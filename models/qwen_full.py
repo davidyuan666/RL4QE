@@ -28,8 +28,7 @@ class QwenFullQueryEnhancer(nn.Module):
             model_name,
             trust_remote_code=True,
             cache_dir="huggingface_cache",
-            device_map="auto",
-            load_in_4bit=True
+            device_map="auto"
         )
         
         # Ensure model config has pad token ID set
