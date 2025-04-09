@@ -6,7 +6,7 @@ openai
 python-dotenv
 modelscope
 httpx[socks]
-transformers>=4.35.0
+transformers==4.36.2
 torch>=2.0.0
 accelerate
 tiktoken
@@ -14,7 +14,7 @@ einops
 transformers_stream_generator
 vllm
 bitsandbytes
-peft
+peft==0.7.1
 rouge
 nltk
 psutil
