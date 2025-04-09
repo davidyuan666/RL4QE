@@ -374,8 +374,13 @@ class RLTrainer:
         print(f"已保存训练指标到: {self.metrics_file}")
 
 
-def load_jsonl_data(file_path):
-    """从JSONL文件加载数据"""
+def load_jsonl_data(file_path, sample_ratio=1.0):
+    """从JSONL文件加载数据，并按照指定比例采样
+    
+    Args:
+        file_path (str): JSONL文件路径
+        sample_ratio (float): 采样比例，范围[0,1]，默认1.0表示使用全部数据
+    """
     if not os.path.exists(file_path):
         print(f"数据文件不存在: {file_path}")
         return []
@@ -392,7 +397,15 @@ def load_jsonl_data(file_path):
             except json.JSONDecodeError:
                 print(f"警告: 跳过无效的JSON行: {line[:50]}...")
     
-    print(f"从 {file_path} 加载了 {len(data)} 条数据")
+    # 如果需要采样
+    if sample_ratio < 1.0:
+        import random
+        sample_size = int(len(data) * sample_ratio)
+        data = random.sample(data, sample_size)
+        print(f"从 {file_path} 加载了 {len(data)} 条数据 (采样比例: {sample_ratio:.2%})")
+    else:
+        print(f"从 {file_path} 加载了 {len(data)} 条数据")
+    
     return data
 
 
@@ -406,9 +419,12 @@ def main():
                        help="训练的轮数")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4,
                        help="梯度累积步数")
+    parser.add_argument("--sample-ratio", type=float, default=3.0,
+                       help="训练数据采样比例 (0,1]")
     args = parser.parse_args()
 
-
+    if args.sample_ratio <= 0 or args.sample_ratio > 1:
+        raise ValueError("采样比例必须在(0,1]范围内")
     # 设置PyTorch内存管理
     if torch.cuda.is_available():
         # 设置内存分配器以减少内存碎片
@@ -458,16 +474,17 @@ def main():
     
     # 加载训练、验证和测试数据集
     print("正在加载数据集...")
-    train_data = load_jsonl_data("dataset/train.jsonl")
-    val_data = load_jsonl_data("dataset/val.jsonl")
-    test_data = load_jsonl_data("dataset/test.jsonl")
+    train_data = load_jsonl_data("dataset/train.jsonl",args.sample_ratio)
+    val_data = load_jsonl_data("dataset/val.jsonl",args.sample_ratio)
+    test_data = load_jsonl_data("dataset/test.jsonl",args.sample_ratio)
     
     # 记录数据集大小
     dataset_info = {
         "train_size": len(train_data),
         "val_size": len(val_data),
         "test_size": len(test_data),
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "sample_ratio": args.sample_ratio
     }
     
     with open(os.path.join(reward_log_dir, "dataset_info.json"), "w", encoding="utf-8") as f:
