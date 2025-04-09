@@ -673,8 +673,8 @@ def main():
     print(f"Current training mode: {training_mode}")
     
     # Create directories
-    checkpoint_dir = f"rq2/checkpoints_{training_mode}"
-    log_dir = f"rq2/logs_{training_mode}"
+    checkpoint_dir = f"rq1_2/checkpoints_{training_mode}"
+    log_dir = f"rq1_2/logs_{training_mode}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
     
