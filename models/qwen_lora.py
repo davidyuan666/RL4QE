@@ -31,12 +31,20 @@ class QwenLoRAQueryEnhancer(nn.Module):
         
         # 加载基础模型 - 使用低精度和量化以节省内存
         print("正在加载Qwen基础模型...")
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,  # 改为4位量化
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,  # 使用双重量化进一步节省内存
+            bnb_4bit_quant_type="nf4"  # 使用NF4量化类型，在大多数情况下表现更好
+        )
+
         self.base_model = AutoModelForCausalLM.from_pretrained(
             model_name,  # Changed from model_name=model_name
             trust_remote_code=True,
             cache_dir="huggingface_cache",
             device_map="auto",
-            load_in_8bit=True,  # 使用8位量化
+            quantization_config=quantization_config,  # 应用4位量化配置
+            # load_in_8bit=True,  # 使用8位量化
             torch_dtype=torch.float16  # 使用半精度
         )
 
