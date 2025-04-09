@@ -639,7 +639,7 @@ def main():
     
     # 加载并处理数据集
     print("加载数据集...")
-    full_data = load_and_process_data("dataset/train.jsonl", sample_ratio=0.3)
+    full_data = load_and_process_data("dataset/train.jsonl", sample_ratio=os.getenv("SAMPLE_RATIO"))
     train_data, val_data, test_data = split_data(full_data, train_ratio=0.8, val_ratio=0.1)
     
     # 记录数据集信息
@@ -648,7 +648,7 @@ def main():
         "train_size": len(train_data),
         "val_size": len(val_data),
         "test_size": len(test_data),
-        "sample_ratio": 0.3,
+        "sample_ratio": os.getenv("SAMPLE_RATIO"),
         "train_ratio": 0.8,
         "val_ratio": 0.1,
         "test_ratio": 0.1,
