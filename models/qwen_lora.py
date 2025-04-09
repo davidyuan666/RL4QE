@@ -6,7 +6,9 @@ import numpy as np
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 # 添加QwenLoRAQueryEnhancer实现
 class QwenLoRAQueryEnhancer(nn.Module):
     def __init__(self, lora_r=int(os.getenv("LORA_R")), lora_alpha=int(os.getenv("LORA_ALPHA")), lora_dropout=float(os.getenv("LORA_DROPOUT"))):
