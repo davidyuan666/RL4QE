@@ -18,3 +18,5 @@ peft
 rouge
 nltk
 psutil
+gptqmodel
+optimum
