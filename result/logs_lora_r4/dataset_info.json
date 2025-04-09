@@ -1,0 +1,11 @@
+{
+  "total_samples": 100,
+  "train_size": 80,
+  "val_size": 10,
+  "test_size": 10,
+  "sample_ratio": 0.1,
+  "train_ratio": 0.8,
+  "val_ratio": 0.1,
+  "test_ratio": 0.1,
+  "timestamp": "20250409_035123"
+}
