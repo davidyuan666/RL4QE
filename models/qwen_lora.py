@@ -54,7 +54,7 @@ class QwenLoRAQueryEnhancer(nn.Module):
         print("正在应用LoRA适配器...")
         # In models/qwen_lora.py, around line 46-50
 
-        if model_name == "Qwen/Qwen1.5-7B-Chat" or 'Qwen/Qwen1.5-MoE-A2.7B-Chat'  or 'Qwen/Qwen-1_8B-Chat':
+        if model_name in ["Qwen/Qwen1.5-7B-Chat", "Qwen/Qwen1.5-MoE-A2.7B-Chat", "Qwen/Qwen-1_8B-Chat"]:
             target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
         else:
             target_modules = ["c_attn", "c_proj", "w1", "w2"]
