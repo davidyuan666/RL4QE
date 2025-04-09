@@ -602,6 +602,62 @@ def run_training_epoch(trainer: RLTrainer,
     else:
         trainer.save_checkpoint(epoch, avg_train_reward, checkpoint_path=latest_checkpoint_path)
 
+def print_training_summary(trainer: RLTrainer):
+    """Print a summary of the training metrics and results.
+    
+    Args:
+        trainer: The RLTrainer instance containing training metrics
+    """
+    print("\n====== Training Summary ======")
+    
+    # Training statistics
+    print("\nTraining Statistics:")
+    if trainer.metrics["train_rewards"]:
+        print(f"Average Training Reward: {sum(trainer.metrics['train_rewards']) / len(trainer.metrics['train_rewards']):.4f}")
+        print(f"Best Training Reward: {max(trainer.metrics['train_rewards']):.4f}")
+        print(f"Total Steps Completed: {trainer.metrics['steps_completed']}")
+        print(f"Total Samples Processed: {trainer.metrics['total_samples_processed']}")
+    
+    # Validation statistics
+    print("\nValidation Statistics:")
+    if trainer.metrics["val_rewards"]:
+        print(f"Best Validation Reward: {trainer.metrics['best_val_reward']:.4f}")
+        print(f"Best Validation Epoch: {trainer.metrics['best_val_epoch']}")
+        if trainer.metrics["val_precision"]:
+            latest_val_idx = -1
+            print(f"Final Validation Metrics:")
+            print(f"- Precision: {trainer.metrics['val_precision'][latest_val_idx]:.4f}")
+            print(f"- Recall: {trainer.metrics['val_recall'][latest_val_idx]:.4f}")
+            print(f"- F1 Score: {trainer.metrics['val_f1'][latest_val_idx]:.4f}")
+            print(f"- CSS Score: {trainer.metrics['val_css'][latest_val_idx]:.4f}")
+    
+    # Test statistics
+    print("\nTest Statistics:")
+    print(f"Final Test Reward: {trainer.metrics['test_rewards']:.4f}")
+    print(f"Test Metrics:")
+    print(f"- Precision: {trainer.metrics['test_precision']:.4f}")
+    print(f"- Recall: {trainer.metrics['test_recall']:.4f}")
+    print(f"- F1 Score: {trainer.metrics['test_f1']:.4f}")
+    print(f"- CSS Score: {trainer.metrics['test_css']:.4f}")
+    
+    # Training time and resource statistics
+    print("\nResource Usage:")
+    training_time_hours = trainer.metrics["training_time"] / 3600
+    print(f"Total Training Time: {training_time_hours:.2f} hours")
+    if trainer.metrics["oom_events"] > 0:
+        print(f"Out of Memory Events: {trainer.metrics['oom_events']}")
+    
+    if trainer.metrics.get("final_memory_stats"):
+        mem_stats = trainer.metrics["final_memory_stats"]
+        print("\nFinal Memory Usage:")
+        print(f"RAM Used: {mem_stats['ram_used']:.2f} MB ({mem_stats['ram_percent']}%)")
+        if 'gpu_used' in mem_stats:
+            print(f"GPU Memory Used: {mem_stats['gpu_used']:.2f} MB")
+            print(f"GPU Memory Cached: {mem_stats['gpu_cached']:.2f} MB")
+    
+    print("\n====== End of Training Summary ======")
+
+    
 def main():
     # PyTorch memory management setup
     if torch.cuda.is_available():
