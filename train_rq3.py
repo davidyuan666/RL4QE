@@ -30,8 +30,8 @@ class RLTrainer:
                  deepseek_api: DeepseekAPI,
                  reward_calculator: RewardCalculator,
                  learning_rate: float = 1e-4,
-                 checkpoint_dir: str = "rq2/checkpoints",
-                 log_dir: str = "rq2/logs",
+                 checkpoint_dir: str = "rq3/checkpoints",
+                 log_dir: str = "rq3/logs",
                  gradient_accumulation_steps: int = 1,
                  is_lora: bool = True,
                  use_amp: bool = True,
@@ -672,8 +672,8 @@ def main():
     print(f"Current training mode: {training_mode}")
     
     # Create directories
-    checkpoint_dir = f"rq2/checkpoints_{training_mode}"
-    log_dir = f"rq2/logs_{training_mode}"
+    checkpoint_dir = f"rq3/checkpoints_{training_mode}"
+    log_dir = f"rq3/logs_{training_mode}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
     
