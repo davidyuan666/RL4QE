@@ -47,7 +47,7 @@ class RLTrainer:
         # AMP initialization with explicit float16
         self.use_amp = use_amp and torch.cuda.is_available() and not is_lora
         if self.use_amp:
-            self.scaler = GradScaler(enabled=True)
+            self.scaler = torch.amp.GradScaler('cuda', enabled=True)  # 更新为新的API用法
             self.amp_dtype = torch.float16
         else:
             self.scaler = None
@@ -286,10 +286,13 @@ class RLTrainer:
 
         return avg_reward
 
-    def save_checkpoint(self, epoch: int, avg_reward: float, is_best: bool = False):
+    def save_checkpoint(self, epoch: int, avg_reward: float, is_best: bool = False, checkpoint_path: str = None):
         """Save model checkpoint"""
         if self.is_lora:
-            checkpoint_dir = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{epoch}")
+            if checkpoint_path is None:
+                checkpoint_dir = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{epoch}")
+            else:
+                checkpoint_dir = checkpoint_path
             os.makedirs(checkpoint_dir, exist_ok=True)
             
             self.query_enhancer.save_lora_weights(checkpoint_dir)
@@ -320,7 +323,8 @@ class RLTrainer:
                 'amp_state': self.scaler.state_dict() if self.use_amp else None
             }
             
-            checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
+            if checkpoint_path is None:
+                checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
             torch.save(checkpoint, checkpoint_path)
             
             if is_best:
@@ -515,7 +519,88 @@ def split_data(data: List[Dict], train_ratio: float = 0.8, val_ratio: float = 0.
     
     return train_data, val_data, test_data
 
-
+def run_training_epoch(trainer: RLTrainer, 
+                      train_data: List[Dict], 
+                      val_data: List[Dict], 
+                      epoch: int, 
+                      num_epochs: int) -> None:
+    """
+    运行一个训练轮次
+    
+    Args:
+        trainer: RLTrainer实例
+        train_data: 训练数据
+        val_data: 验证数据
+        epoch: 当前轮次
+        num_epochs: 总轮次数
+    """
+    print(f"\n====== Epoch {epoch + 1}/{num_epochs} ======")
+    epoch_start_time = time.time()
+    total_reward = 0
+    
+    # 确保优化器梯度清零开始新的epoch
+    trainer.optimizer.zero_grad()
+    
+    # 训练阶段
+    for idx, data in enumerate(train_data):
+        try:
+            reward, enhanced_query, generated_code = trainer.train_step(
+                data["prompt"],
+                data["reference_code"],
+                idx
+            )
+            print(f"训练: Epoch {epoch + 1}, Sample {idx+1}/{len(train_data)}, Reward: {reward:.4f}")
+            
+            total_reward += reward
+            
+            # 每处理一定数量样本后手动执行垃圾回收
+            if (idx + 1) % 5 == 0:
+                trainer._cleanup_memory()
+            
+            # 定期进行验证
+            if (idx + 1) % trainer.validation_interval == 0:
+                print("\n执行验证...")
+                val_reward = trainer.validate(val_data)
+                print(f"验证奖励: {val_reward:.4f}")
+                
+                # 如果是最佳验证奖励，保存最佳模型
+                if val_reward > trainer.metrics["best_val_reward"]:
+                    trainer.metrics["best_val_reward"] = val_reward
+                    trainer.metrics["best_val_epoch"] = epoch
+                    trainer.save_checkpoint(epoch, val_reward, is_best=True)
+                    print(f"发现新的最佳模型! 奖励: {val_reward:.4f}")
+                
+                # 恢复训练模式
+                trainer.query_enhancer.train()
+                
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"警告: CUDA内存不足。释放缓存并跳过当前样本。")
+                trainer._cleanup_memory()
+                continue
+            else:
+                raise e
+    
+    # 计算平均奖励
+    avg_train_reward = total_reward / len(train_data)
+    print(f"\n[*] Epoch {epoch + 1} 完成")
+    print(f"平均训练奖励: {avg_train_reward:.4f}")
+    
+    # 更新指标
+    trainer.metrics["train_rewards"].append(avg_train_reward)
+    trainer.metrics["epoch_times"].append(time.time() - epoch_start_time)
+    
+    # 保存当前epoch的检查点
+    trainer.save_checkpoint(epoch, avg_train_reward)
+    
+    # 保存为最新检查点
+    latest_checkpoint_path = os.path.join(trainer.checkpoint_dir, 
+                                        "latest_checkpoint" if trainer.is_lora else "latest_checkpoint.pt")
+    if trainer.is_lora:
+        os.makedirs(latest_checkpoint_path, exist_ok=True)
+        trainer.query_enhancer.save_lora_weights(latest_checkpoint_path)
+    else:
+        trainer.save_checkpoint(epoch, avg_train_reward, checkpoint_path=latest_checkpoint_path)
 
 def main():
     # PyTorch memory management setup
