@@ -37,11 +37,16 @@ class RLTrainer:
         self.deepseek_api = deepseek_api
         self.reward_calculator = reward_calculator
         self.is_lora = is_lora
+        # Modify AMP initialization to explicitly use float16
         self.use_amp = use_amp and torch.cuda.is_available() and not is_lora
-        
-        # 初始化梯度缩放器
-        self.scaler = GradScaler() if self.use_amp else None
-        
+        if self.use_amp:
+            self.scaler = GradScaler(enabled=True)
+            self.amp_dtype = torch.float16  # Explicitly set to float16 instead of default bfloat16
+        else:
+            self.scaler = None
+
+    
+
         # 根据模型类型设置优化器
         if self.is_lora:
             # 只训练LoRA参数
@@ -137,8 +142,8 @@ class RLTrainer:
             # 切换到训练模式
             self.query_enhancer.train()
             
-            # 4. Compute loss with mixed precision
-            with autocast(enabled=self.use_amp):
+            # Modify autocast to explicitly use float16
+            with autocast(enabled=self.use_amp, dtype=torch.float16):
                 model_loss, _ = self.query_enhancer.forward_with_loss([original_query])
                 loss = -torch.mean(torch.tensor(reward, device=model_loss.device) * model_loss) / self.gradient_accumulation_steps
 
@@ -191,6 +196,11 @@ class RLTrainer:
                 self._cleanup_memory()
                 print(f"内存不足错误 (OOM #{self.metrics['oom_events']})")
                 raise e
+            elif "_amp_foreach_non_finite_check_and_unscale_cuda" in str(e):
+                print("AMP scaling error encountered, disabling AMP and retrying...")
+                self.use_amp = False
+                self.scaler = None
+                return self.train_step(original_query, ground_truth, step)
             raise e
 
     def _parse_response(self, response: str) -> str:
@@ -357,6 +367,8 @@ def main():
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        # Add explicit dtype setting for AMP
+        torch.set_float32_matmul_precision('high')
     
     # 获取训练模式
     training_mode = TRAINING_MODE
