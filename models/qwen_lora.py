@@ -4,7 +4,7 @@ import torch.optim as optim
 from typing import List, Dict, Tuple
 import numpy as np
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM,BitsAndBytesConfig
 import os
 from dotenv import load_dotenv
 
