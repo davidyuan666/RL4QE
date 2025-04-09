@@ -20,3 +20,6 @@ nltk
 psutil
 gptqmodel
 optimum
+scipy 
+deepspeed
+auto-gptq
