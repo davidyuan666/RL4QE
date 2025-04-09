@@ -637,9 +637,11 @@ def main():
     # Set gradient accumulation steps
     gradient_accumulation_steps = 32 if not is_lora else 8
     
+    # Convert SAMPLE_RATIO to float with default value of 1.0
+    sample_ratio = float(os.getenv("SAMPLE_RATIO", "1.0"))
     # 加载并处理数据集
     print("加载数据集...")
-    full_data = load_and_process_data("dataset/train.jsonl", sample_ratio=os.getenv("SAMPLE_RATIO"))
+    full_data = load_and_process_data("dataset/train.jsonl", sample_ratio=sample_ratio)
     train_data, val_data, test_data = split_data(full_data, train_ratio=0.8, val_ratio=0.1)
     
     # 记录数据集信息
@@ -648,7 +650,7 @@ def main():
         "train_size": len(train_data),
         "val_size": len(val_data),
         "test_size": len(test_data),
-        "sample_ratio": os.getenv("SAMPLE_RATIO"),
+        "sample_ratio": sample_ratio,
         "train_ratio": 0.8,
         "val_ratio": 0.1,
         "test_ratio": 0.1,
