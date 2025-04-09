@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
-
+import os
 
 # 添加QwenLoRAQueryEnhancer实现
 class QwenLoRAQueryEnhancer(nn.Module):
