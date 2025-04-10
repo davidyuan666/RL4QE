@@ -3,8 +3,6 @@ A Reinforcement Learning framework for Large Language Models (LLMs), focusing on
 
 ## Installation
 
-## Installation
-
 There are two ways to install and run the project:
 
 ### Method 1: Using pip
