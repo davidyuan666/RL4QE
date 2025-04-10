@@ -110,7 +110,7 @@ If you find this work useful in your research, please consider citing:
   howpublished = {\url{https://github.com/yourusername/RL4LLM}}
 }
 ```
-
+Dataset and Additional Resources: [https://doi.org/10.6084/m9.figshare.28767299.v2](https://doi.org/10.6084/m9.figshare.28767299.v2)
 
 ## License
 [MIT License](LICENSE)
