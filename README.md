@@ -99,13 +99,15 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 If you find this work useful in your research, please consider citing:
 
 ```bibtex
-@misc{rl4llm2024,
-  author = {Your Name},
-  title = {RL4LLM: A Reinforcement Learning Framework for Large Language Models},
-  year = {2024},
-  publisher = {GitHub},
-  journal = {GitHub Repository},
-  howpublished = {\url{https://github.com/yourusername/RL4LLM}}
+@article{yuan2025enhancing,
+  title={Enhancing queries for code generation with reinforcement learning},
+  author={Yuan, Dawei and Liang, Guojun and Li, Tingting and Liu, Suping},
+  journal={Scientific Reports},
+  volume={15},
+  number={1},
+  pages={37300},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
 }
 ```
 Dataset and Additional Resources: [https://doi.org/10.6084/m9.figshare.28767299.v2](https://doi.org/10.6084/m9.figshare.28767299.v2)
