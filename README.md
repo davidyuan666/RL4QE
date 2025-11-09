@@ -1,6 +1,6 @@
 # RL4QE
 A Reinforcement Learning framework for Large Language Models (LLMs), focusing on code generation tasks. This repository implements various RL training methods to enhance LLMs' ability to generate high-quality code based on user queries.
-https://www.nature.com/articles/s41598-025-21271-4
+
 ## Installation
 
 There are two ways to install and run the project:
